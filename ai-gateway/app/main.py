@@ -1,4 +1,5 @@
 import os
+from typing import Annotated
 from fastapi import FastAPI, HTTPException, BackgroundTasks, UploadFile, File
 from pydantic import BaseModel
 import httpx
@@ -39,7 +40,7 @@ async def generate_with_ollama(prompt: str, model: str = "llama3") -> str:
         except httpx.RequestError as e:
             raise HTTPException(status_code=503, detail=f"Ollama service unavailable: {str(e)}")
 
-@app.post("/api/v1/generate")
+@app.post("/api/v1/generate", responses={503: {"description": "Ollama service unavailable"}})
 async def generate_content(request: GenerateRequest):
     """
     Generate content using local Ollama instance.
@@ -48,8 +49,12 @@ async def generate_content(request: GenerateRequest):
     response_text = await generate_with_ollama(request.prompt, request.model)
     return {"response": response_text}
 
-@app.post("/api/v1/ingest/document")
-async def ingest_document(file: UploadFile = File(...)):
+@app.post("/api/v1/ingest/document", responses={
+    400: {"description": "Only PDF and PPTX files are supported"},
+    500: {"description": "Failed to process document"},
+    503: {"description": "Ollama service unavailable"}
+})
+async def ingest_document(file: Annotated[UploadFile, File(...)]):
     """
     Module A: Intelligent Document Ingestion
     Upload PDF/PPT, extract text, and use LLM to generate Key Takeaways and Glossary.
@@ -90,10 +95,12 @@ async def ingest_document(file: UploadFile = File(...)):
         }
         
     except Exception as e:
+        if isinstance(e, HTTPException):
+            raise e
         raise HTTPException(status_code=500, detail=f"Failed to process document: {str(e)}")
 
 @app.post("/api/v1/transcribe")
-async def transcribe_audio(file: UploadFile = File(...)):
+async def transcribe_audio(file: Annotated[UploadFile, File(...)]):
     """
     Module C: Multimedia Intelligence
     Upload Audio/Video for Whisper transcription.
