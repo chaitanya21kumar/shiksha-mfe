@@ -64,15 +64,15 @@ const nextConfig = {
       },
       {
         source: '/action/v1/telemetry',
-        destination: `${process.env.NEXT_PUBLIC_TELEMETRY_URL}/v1/telemetry`,
+        destination: `${process.env.NEXT_PUBLIC_TELEMETRY_URL || ''}/v1/telemetry`,
       },
       {
         source: '/action/data/v3/telemetry',
-        destination: `${process.env.NEXT_PUBLIC_TELEMETRY_URL}/v1/telemetry`,
+        destination: `${process.env.NEXT_PUBLIC_TELEMETRY_URL || ''}/v1/telemetry`,
       },
       {
         source: '/data/v3/telemetry',
-        destination: `${process.env.NEXT_PUBLIC_TELEMETRY_URL}/v1/telemetry`,
+        destination: `${process.env.NEXT_PUBLIC_TELEMETRY_URL || ''}/v1/telemetry`,
       },
       {
         source: '/action/:path*', // Match any other routes starting with /action/

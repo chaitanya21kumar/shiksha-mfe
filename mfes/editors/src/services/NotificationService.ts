@@ -48,6 +48,3 @@ export const sendCredentialService = async ({
     throw error; 
   }
 };
-
-
-
