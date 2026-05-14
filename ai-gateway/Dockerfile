@@ -7,6 +7,7 @@ RUN apt-get update && apt-get install -y \
     build-essential \
     libffi-dev \
     libmupdf-dev \
+    ffmpeg \
     && rm -rf /var/lib/apt/lists/*
 
 # Install python dependencies

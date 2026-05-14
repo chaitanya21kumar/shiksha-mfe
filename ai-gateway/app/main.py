@@ -1,6 +1,6 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from app.routers import ingestion, assessment
+from app.routers import ingestion, assessment, multimedia
 
 app = FastAPI(
     title="Shiksha DMP 2026 AI Gateway",
@@ -17,8 +17,9 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-app.include_router(ingestion.router, prefix="/api/v1/ingestion", tags=["Document Ingestion"])
+app.include_router(ingestion.router, prefix="/api/v1/ingestion", tags=["Document Ingestion (Module A)"])
 app.include_router(assessment.router, prefix="/api/v1/assessment", tags=["Automated Assessment (Module B)"])
+app.include_router(multimedia.router, prefix="/api/v1/multimedia", tags=["Multimedia Intelligence (Module C)"])
 
 @app.get("/health")
 def health_check():
