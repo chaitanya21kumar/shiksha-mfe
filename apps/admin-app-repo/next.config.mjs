@@ -75,15 +75,15 @@ const nextConfig = {
       },
       {
         source: '/action/v1/telemetry',
-        destination: `${process.env.NEXT_PUBLIC_TELEMETRY_URL}/v1/telemetry`,
+        destination: `${process.env.NEXT_PUBLIC_TELEMETRY_URL || ''}/v1/telemetry`,
       },
       {
         source: '/action/data/v3/telemetry',
-        destination: `${process.env.NEXT_PUBLIC_TELEMETRY_URL}/v1/telemetry`,
+        destination: `${process.env.NEXT_PUBLIC_TELEMETRY_URL || ''}/v1/telemetry`,
       },
       {
         source: '/data/v3/telemetry',
-        destination: `${process.env.NEXT_PUBLIC_TELEMETRY_URL}/v1/telemetry`,
+        destination: `${process.env.NEXT_PUBLIC_TELEMETRY_URL || ''}/v1/telemetry`,
       },
       {
         source: '/action/content/:path*',
@@ -103,7 +103,7 @@ const nextConfig = {
       },
       {
         source: '/assets/public/:path*',
-        destination: `${process.env.CLOUD_STORAGE_URL}/:path*`,
+        destination: `${process.env.CLOUD_STORAGE_URL || ''}/:path*`,
       },
       {
         source: routes.API.GENERAL.CONTENT_PREVIEW,

@@ -49,7 +49,7 @@ const nextConfig = {
       },
       {
         source: `/action/v1/telemetry`,
-        destination: `${process.env.NEXT_PUBLIC_TELEMETRY_URL}/v1/telemetry`,
+        destination: `${process.env.NEXT_PUBLIC_TELEMETRY_URL || ''}/v1/telemetry`,
       },
       {
         source: '/action/asset/:path*', // Match other /action/asset routes
@@ -69,7 +69,7 @@ const nextConfig = {
       },
       {
         source: '/assets/public/:path*', // Match any URL starting with /assets/public/
-        destination: `${process.env.CLOUD_STORAGE_URL}/:path*`, // Forward to workspace proxy
+        destination: `${process.env.CLOUD_STORAGE_URL || ''}/:path*`, // Forward to workspace proxy
       },
 
       {
