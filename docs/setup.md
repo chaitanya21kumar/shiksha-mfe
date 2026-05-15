@@ -13,7 +13,7 @@ curl http://localhost:8000/health
 
 ## Smoke-test the API
 ```bash
-python ai-gateway/scripts/smoke_test.py
+python ai-gateway/scripts/smoke_api.py
 ```
 
 ## Frontend

@@ -4,8 +4,13 @@ from app.packaging.common import write_zip, json_text
 
 def build_h5p_question_set(title: str, questions: list[Question], output: Path):
     params = {'introPage': {'showIntroPage': False}, 'questions': []}
+    library_by_type = {
+        'mcq': 'H5P.MultiChoice 1.16',
+        'fill_blank': 'H5P.Blanks 1.14',
+        'match_pair': 'H5P.DragQuestion 1.14',
+    }
     for q in questions:
-        params['questions'].append({'library': 'H5P.MultiChoice 1.16' if q.type == 'mcq' else 'H5P.Blanks 1.14', 'params': q.model_dump()})
+        params['questions'].append({'library': library_by_type[q.type.value], 'params': q.model_dump()})
     return write_zip(output, {
         'h5p.json': json_text({'title': title, 'mainLibrary': 'H5P.QuestionSet', 'preloadedDependencies': [{'machineName':'H5P.QuestionSet','majorVersion':1,'minorVersion':20}]}),
         'content/content.json': json_text(params),
