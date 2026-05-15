@@ -1,5 +1,7 @@
+import sys
 import time
 from pathlib import Path
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from reportlab.pdfgen import canvas
 from app.services.ingestion_service import parse_pdf
 
