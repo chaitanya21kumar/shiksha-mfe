@@ -87,7 +87,11 @@ const nextConfig = {
         source: routes.API.GENERAL.CONTENT_PLUGINS,
         destination: `${PORTAL_BASE_URL}${routes.API.GENERAL.CONTENT_PLUGINS}`, // Proxy to portal
       },
-    ];
+    ]
+      // Drop rewrites whose destination depends on an unset env var; otherwise
+      // the destination becomes "undefined/..." and fails the Next.js build on a
+      // fresh checkout. With env vars set, every rewrite is returned unchanged.
+      .filter((rule) => !String(rule.destination).includes('undefined'));
   },
 };
 

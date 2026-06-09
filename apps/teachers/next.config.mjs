@@ -88,7 +88,11 @@ const nextConfig = {
         source: '/sunbird-plugins/renderer/:path*',
         destination: `${process.env.NEXT_PUBLIC_WORKSPACE_BASE_URL}/sunbird-plugins/renderer/:path*`,
       },
-    ];
+    ]
+      // Drop rewrites whose destination depends on an unset env var; otherwise
+      // the destination becomes "undefined/..." and fails the Next.js build on a
+      // fresh checkout. With env vars set, every rewrite is returned unchanged.
+      .filter((rule) => !String(rule.destination).includes('undefined'));
   },
 };
 
