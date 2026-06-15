@@ -16,6 +16,7 @@ from fastapi import FastAPI
 from fastapi.responses import JSONResponse
 
 from .config import settings
+from .ingestion.router import router as ingestion_router
 
 logger = logging.getLogger("ai_engine")
 
@@ -73,6 +74,7 @@ def create_app() -> FastAPI:
             content={"ready": is_ready, "components": components},
         )
 
+    app.include_router(ingestion_router)
     return app
 
 
