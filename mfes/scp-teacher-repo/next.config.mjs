@@ -1,3 +1,4 @@
+import { isResolvedRewrite } from '../../next-rewrites-guard.cjs';
 import nextI18nextConfig from './next-i18next.config.js';
 import withPWA from 'next-pwa';
 import { NextFederationPlugin } from '@module-federation/nextjs-mf';
@@ -106,10 +107,7 @@ const nextConfig = {
         destination: `${process.env.NEXT_PUBLIC_WORKSPACE_BASE_URL}/sunbird-plugins/renderer/:path*`,
       },
     ]
-      // Drop rewrites whose destination depends on an unset env var; otherwise
-      // the destination becomes "undefined/..." and fails the Next.js build on a
-      // fresh checkout. With env vars set, every rewrite is returned unchanged.
-      .filter((rule) => !String(rule.destination).includes('undefined'));
+      .filter(isResolvedRewrite);
   },
   webpack: (config, { isServer }) => {
     config.plugins.push(
