@@ -30,7 +30,14 @@ def _parser_version() -> str:
 
 
 def _text_frame_blocks(text_frame) -> list[Block]:
-    """A text frame becomes a list (several lines) or a single paragraph."""
+    """Turn a text frame into blocks.
+
+    A multi-line text frame is treated as a list: on a slide, a body placeholder
+    with several lines is almost always a bullet list, and python-pptx does not
+    reliably expose bullet formatting (a flat bullet list and flat body text
+    both report indent level 0), so the line count is the most dependable
+    signal. A single line stays a paragraph.
+    """
     paragraphs = [p.text.strip() for p in text_frame.paragraphs if p.text.strip()]
     if not paragraphs:
         return []
@@ -39,58 +46,68 @@ def _text_frame_blocks(text_frame) -> list[Block]:
     return [Block(kind=BlockKind.paragraph, text=paragraphs[0])]
 
 
+def _shape_entries(
+    shape, slide_index: int, title_id, image_index: int, warnings: list[str]
+) -> tuple[list[tuple[int, Block]], int]:
+    """Blocks contributed by one shape, plus the running image counter.
+
+    Returns ``(entries, image_index)`` where each entry is ``(top, Block)`` so
+    the caller can restore reading order, and ``image_index`` is the updated
+    per-slide picture count.
+    """
+    top = shape.top or 0
+
+    if title_id is not None and shape.shape_id == title_id:
+        text = shape.text_frame.text.strip() if shape.has_text_frame else ""
+        if text:
+            return [(top, Block(kind=BlockKind.heading, text=" ".join(text.split()), level=1))], image_index
+        return [], image_index
+
+    if getattr(shape, "has_table", False):
+        rows = [[cell.text.strip() for cell in row.cells] for row in shape.table.rows]
+        return [(top, Block(kind=BlockKind.table, rows=rows))], image_index
+
+    if shape.shape_type == MSO_SHAPE_TYPE.PICTURE:
+        image_index += 1
+        width = height = None
+        try:
+            width, height = shape.image.size
+        except Exception:  # noqa: BLE001 - image metadata is best-effort
+            warnings.append(f"slide {slide_index}: could not read image dimensions")
+        ref = ImageRef(id=f"s{slide_index}-img{image_index}", width=width, height=height)
+        return [(top, Block(kind=BlockKind.image, image=ref))], image_index
+
+    if shape.has_text_frame:
+        return [(top, block) for block in _text_frame_blocks(shape.text_frame)], image_index
+
+    return [], image_index
+
+
+def _build_slide(slide, slide_index: int, warnings: list[str]) -> Page:
+    """Assemble one slide's blocks in reading order, plus speaker notes."""
+    title = slide.shapes.title
+    title_id = title.shape_id if title is not None else None
+
+    entries: list[tuple[int, Block]] = []
+    image_index = 0
+    for shape in slide.shapes:
+        shape_entries, image_index = _shape_entries(shape, slide_index, title_id, image_index, warnings)
+        entries.extend(shape_entries)
+    entries.sort(key=lambda item: item[0])
+
+    notes = None
+    if slide.has_notes_slide:
+        notes = slide.notes_slide.notes_text_frame.text.strip() or None
+
+    return Page(index=slide_index, kind="slide", blocks=[block for _, block in entries], notes=notes)
+
+
 def parse_pptx(path: str | Path) -> ParsedDocument:
     """Read a PPTX and return its structured representation."""
     path = Path(path)
     warnings: list[str] = []
     prs = Presentation(str(path))
-    pages: list[Page] = []
-
-    for slide_index, slide in enumerate(prs.slides, start=1):
-        title = slide.shapes.title
-        title_id = title.shape_id if title is not None else None
-        positioned: list[tuple[int, Block]] = []
-        image_count = 0
-
-        for shape in slide.shapes:
-            top = shape.top or 0
-
-            if title_id is not None and shape.shape_id == title_id:
-                text = shape.text_frame.text.strip() if shape.has_text_frame else ""
-                if text:
-                    positioned.append((top, Block(kind=BlockKind.heading, text=" ".join(text.split()), level=1)))
-                continue
-
-            if getattr(shape, "has_table", False):
-                rows = [[cell.text.strip() for cell in row.cells] for row in shape.table.rows]
-                positioned.append((top, Block(kind=BlockKind.table, rows=rows)))
-                continue
-
-            if shape.shape_type == MSO_SHAPE_TYPE.PICTURE:
-                image_count += 1
-                width = height = None
-                try:
-                    width, height = shape.image.size
-                except Exception:  # noqa: BLE001 - image metadata is best-effort
-                    warnings.append(f"slide {slide_index}: could not read image dimensions")
-                positioned.append((
-                    top,
-                    Block(kind=BlockKind.image, image=ImageRef(id=f"s{slide_index}-img{image_count}", width=width, height=height)),
-                ))
-                continue
-
-            if shape.has_text_frame:
-                for block in _text_frame_blocks(shape.text_frame):
-                    positioned.append((top, block))
-
-        positioned.sort(key=lambda item: item[0])
-
-        notes = None
-        if slide.has_notes_slide:
-            notes_text = slide.notes_slide.notes_text_frame.text.strip()
-            notes = notes_text or None
-
-        pages.append(Page(index=slide_index, kind="slide", blocks=[block for _, block in positioned], notes=notes))
+    pages = [_build_slide(slide, index, warnings) for index, slide in enumerate(prs.slides, start=1)]
 
     core = prs.core_properties
     source = SourceInfo(

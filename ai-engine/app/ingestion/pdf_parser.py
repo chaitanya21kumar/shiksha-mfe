@@ -13,6 +13,7 @@ from __future__ import annotations
 from collections import Counter
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Iterator
 
 import pymupdf
 
@@ -38,6 +39,16 @@ def _parse_pdf_date(value: str | None) -> datetime | None:
         return None
 
 
+def _iter_text_spans(page_dicts: list[dict]) -> Iterator[dict]:
+    """Yield every text span across all pages (text blocks have ``type`` 0)."""
+    for data in page_dicts:
+        for block in data.get("blocks", []):
+            if block.get("type") != 0:
+                continue
+            for line in block.get("lines", []):
+                yield from line.get("spans", [])
+
+
 def _document_body_size(page_dicts: list[dict]) -> float:
     """Body text size for the whole document.
 
@@ -47,15 +58,10 @@ def _document_body_size(page_dicts: list[dict]) -> float:
     skew the estimate, which would misread its heading as body text.
     """
     weights: Counter[float] = Counter()
-    for data in page_dicts:
-        for block in data.get("blocks", []):
-            if block.get("type") != 0:
-                continue
-            for line in block.get("lines", []):
-                for span in line.get("spans", []):
-                    text = span.get("text", "").strip()
-                    if text:
-                        weights[round(span["size"], 1)] += len(text)
+    for span in _iter_text_spans(page_dicts):
+        text = span.get("text", "").strip()
+        if text:
+            weights[round(span.get("size", 0.0), 1)] += len(text)
     return weights.most_common(1)[0][0] if weights else 0.0
 
 
@@ -96,60 +102,75 @@ def _strip_marker(line: str) -> str:
     return s
 
 
+def _text_block_entry(block: dict, body: float) -> tuple[float, Block] | None:
+    """Classify one text block as a heading, list, or paragraph (or skip it)."""
+    lines = [
+        "".join(span.get("text", "") for span in line.get("spans", []))
+        for line in block.get("lines", [])
+    ]
+    text = "\n".join(lines).strip()
+    if not text:
+        return None
+
+    y0 = block["bbox"][1]
+    max_size = max(
+        (span.get("size", body) for line in block.get("lines", []) for span in line.get("spans", [])),
+        default=body,
+    )
+    level = _heading_level(max_size, body)
+    if level is not None and len(text.split()) <= _MAX_HEADING_WORDS:
+        return y0, Block(kind=BlockKind.heading, text=" ".join(text.split()), level=level)
+    if _looks_like_list(lines):
+        items = [_strip_marker(ln) for ln in lines if ln.strip()]
+        return y0, Block(kind=BlockKind.list, items=[i for i in items if i])
+    return y0, Block(kind=BlockKind.paragraph, text=" ".join(text.split()))
+
+
+def _image_entries(page: "pymupdf.Page", page_index: int) -> list[tuple[float, Block]]:
+    """Image blocks for a page, keyed by vertical position for reading order."""
+    entries: list[tuple[float, Block]] = []
+    for img_index, info in enumerate(page.get_image_info(xrefs=True), start=1):
+        bbox = info.get("bbox") or (0, 0, 0, 0)
+        entries.append((
+            bbox[1],
+            Block(
+                kind=BlockKind.image,
+                image=ImageRef(
+                    id=f"p{page_index}-img{img_index}",
+                    width=info.get("width"),
+                    height=info.get("height"),
+                ),
+            ),
+        ))
+    return entries
+
+
+def _build_page(data: dict, page: "pymupdf.Page", page_index: int, body: float) -> Page:
+    """Assemble one page's blocks in reading order (top to bottom)."""
+    entries: list[tuple[float, Block]] = []
+    for block in data.get("blocks", []):
+        if block.get("type") != 0:
+            continue
+        entry = _text_block_entry(block, body)
+        if entry is not None:
+            entries.append(entry)
+    entries.extend(_image_entries(page, page_index))
+    entries.sort(key=lambda item: item[0])
+    return Page(index=page_index, kind="page", blocks=[block for _, block in entries])
+
+
 def parse_pdf(path: str | Path) -> ParsedDocument:
     """Read a PDF and return its structured representation."""
     path = Path(path)
-    warnings: list[str] = []
     doc = pymupdf.open(path)
     try:
         meta = doc.metadata or {}
         page_dicts = [page.get_text("dict") for page in doc]
         body = _document_body_size(page_dicts)
-        pages: list[Page] = []
-
-        for page_index, data in enumerate(page_dicts, start=1):
-            text_blocks = [b for b in data.get("blocks", []) if b.get("type") == 0]
-            positioned: list[tuple[float, Block]] = []
-
-            for block in text_blocks:
-                lines = [
-                    "".join(span["text"] for span in line.get("spans", []))
-                    for line in block.get("lines", [])
-                ]
-                text = "\n".join(lines).strip()
-                if not text:
-                    continue
-                y0 = block["bbox"][1]
-                max_size = max(
-                    (span["size"] for line in block["lines"] for span in line["spans"]),
-                    default=body,
-                )
-                level = _heading_level(max_size, body)
-                if level is not None and len(text.split()) <= _MAX_HEADING_WORDS:
-                    positioned.append((y0, Block(kind=BlockKind.heading, text=" ".join(text.split()), level=level)))
-                elif _looks_like_list(lines):
-                    items = [_strip_marker(ln) for ln in lines if ln.strip()]
-                    positioned.append((y0, Block(kind=BlockKind.list, items=[i for i in items if i])))
-                else:
-                    positioned.append((y0, Block(kind=BlockKind.paragraph, text=" ".join(text.split()))))
-
-            for img_index, info in enumerate(doc[page_index - 1].get_image_info(xrefs=True), start=1):
-                bbox = info.get("bbox") or (0, 0, 0, 0)
-                positioned.append((
-                    bbox[1],
-                    Block(
-                        kind=BlockKind.image,
-                        image=ImageRef(
-                            id=f"p{page_index}-img{img_index}",
-                            width=info.get("width"),
-                            height=info.get("height"),
-                        ),
-                    ),
-                ))
-
-            positioned.sort(key=lambda item: item[0])
-            pages.append(Page(index=page_index, kind="page", blocks=[block for _, block in positioned]))
-
+        pages = [
+            _build_page(data, doc[index], index + 1, body)
+            for index, data in enumerate(page_dicts)
+        ]
         source = SourceInfo(
             filename=path.name,
             format="pdf",
@@ -165,7 +186,7 @@ def parse_pdf(path: str | Path) -> ParsedDocument:
             parser_version=_parser_version(),
             parsed_at=datetime.now(timezone.utc),
             pages=pages,
-            warnings=warnings,
+            warnings=[],
         )
     finally:
         doc.close()
