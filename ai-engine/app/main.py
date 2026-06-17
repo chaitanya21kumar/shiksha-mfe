@@ -24,8 +24,14 @@ logger = logging.getLogger("ai_engine")
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     logger.info("Starting %s v%s (env=%s)", settings.app_name, settings.version, settings.environment)
-    yield
-    logger.info("Stopping %s", settings.app_name)
+    # One shared client for outbound probes, reused across requests so we get
+    # connection pooling instead of a fresh client (and socket) per /ready call.
+    app.state.http_client = httpx.AsyncClient(timeout=2.0)
+    try:
+        yield
+    finally:
+        await app.state.http_client.aclose()
+        logger.info("Stopping %s", settings.app_name)
 
 
 def create_app() -> FastAPI:
@@ -35,6 +41,7 @@ def create_app() -> FastAPI:
         summary="Local-first, LMS-agnostic AI engine: documents and media into portable micro-learning.",
         lifespan=lifespan,
     )
+    app.state.http_client = None  # populated on startup; guards calls before lifespan runs
 
     @app.get("/", tags=["system"])
     async def root() -> dict:
@@ -60,10 +67,12 @@ def create_app() -> FastAPI:
     async def ready() -> JSONResponse:
         """Readiness: can we reach what we depend on? (currently the Ollama model gateway)."""
         components: dict[str, str] = {}
+        client: httpx.AsyncClient | None = app.state.http_client
         try:
-            async with httpx.AsyncClient(timeout=2.0) as client:
-                resp = await client.get(f"{settings.ollama_base_url}/api/version")
-                resp.raise_for_status()
+            if client is None:
+                raise RuntimeError("HTTP client not initialised")
+            resp = await client.get(f"{settings.ollama_base_url}/api/version")
+            resp.raise_for_status()
             components["ollama"] = "ok"
         except Exception:  # noqa: BLE001 - probe must never raise; report instead
             components["ollama"] = "unreachable"
