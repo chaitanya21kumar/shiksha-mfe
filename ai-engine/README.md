@@ -20,8 +20,9 @@ All inference runs on self-hosted open models via [Ollama](https://ollama.com)
 | **C — Multimedia Intelligence** | Whisper transcription, chaptering → H5P Interactive Video |
 | **D — Micro-Learning Studio** | Assemble H5P / SCORM / HTML5 lessons; tenant branding; review gate |
 
-This scaffold is **Phase 1**: the FastAPI gateway and system probes. Module A
-(document parsing) is being built on top of it.
+Phase 1 was the FastAPI gateway and system probes. **Module A.1** (document
+ingestion — PDF and PPTX into structured JSON, exposed at `POST /ingest`) is
+built on top of it; the later modules follow.
 
 ## Requirements
 
