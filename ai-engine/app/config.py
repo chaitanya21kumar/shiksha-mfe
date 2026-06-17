@@ -29,9 +29,5 @@ class Settings(BaseSettings):
     ollama_model: str = "llama3.2:3b"
     ollama_validate_model: str = "llama3:8b"
 
-    # Backing services. In dev these are the c4gt-postgres / c4gt-redis containers.
-    database_url: str = "postgresql+psycopg://c4gt:c4gt_dev@localhost:5433/lms_ai"
-    redis_url: str = "redis://localhost:6379/0"
-
 
 settings = Settings()
