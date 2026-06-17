@@ -34,3 +34,14 @@ def test_ingest_pdf_returns_structured_json():
 def test_ingest_rejects_unsupported_type():
     resp = client.post("/ingest", files={"file": ("notes.txt", b"hello", "text/plain")})
     assert resp.status_code == 415
+
+
+def test_ingest_rejects_corrupt_file():
+    # A supported extension but invalid bytes: the parser fails and we should
+    # return a clean 400, not leak a 500.
+    resp = client.post(
+        "/ingest",
+        files={"file": ("broken.pdf", b"this is not a real pdf", "application/pdf")},
+    )
+    assert resp.status_code == 400
+    assert "parse" in resp.json()["detail"].lower()
