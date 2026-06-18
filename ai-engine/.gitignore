@@ -1,0 +1,13 @@
+# Python
+.venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+
+# Local config & artifacts
+.env
+*.log
+
+# OS
+.DS_Store
