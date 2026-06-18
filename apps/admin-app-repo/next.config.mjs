@@ -1,3 +1,4 @@
+import { isResolvedRewrite } from '../../next-rewrites-guard.cjs';
 /** @type {import('next').NextConfig} */
 import nextI18nextConfig from './next-i18next.config.js';
 
@@ -128,7 +129,8 @@ const nextConfig = {
         source: '/app/telemetry',
         destination: `${process.env.NEXT_PUBLIC_WORKSPACE_BASE_URL}/api/telemetry`,
       },
-    ];
+    ]
+      .filter(isResolvedRewrite);
   },
 };
 

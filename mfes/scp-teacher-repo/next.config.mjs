@@ -1,3 +1,4 @@
+import { isResolvedRewrite } from '../../next-rewrites-guard.cjs';
 import nextI18nextConfig from './next-i18next.config.js';
 import withPWA from 'next-pwa';
 import { NextFederationPlugin } from '@module-federation/nextjs-mf';
@@ -105,7 +106,8 @@ const nextConfig = {
         source: '/sunbird-plugins/renderer/:path*',
         destination: `${process.env.NEXT_PUBLIC_WORKSPACE_BASE_URL}/sunbird-plugins/renderer/:path*`,
       },
-    ];
+    ]
+      .filter(isResolvedRewrite);
   },
   webpack: (config, { isServer }) => {
     config.plugins.push(

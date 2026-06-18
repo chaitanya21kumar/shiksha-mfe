@@ -1,3 +1,4 @@
+const { isResolvedRewrite } = require('../../next-rewrites-guard.cjs');
 //@ts-check
 
 // eslint-disable-next-line @typescript-eslint/no-var-requires
@@ -91,7 +92,8 @@ const nextConfig = {
         source: '/app/telemetry', // Match telemetry route
         destination: '/api/telemetry', // Redirect to telemetry proxy
       },
-    ];
+    ]
+      .filter(isResolvedRewrite);
   },
 };
 

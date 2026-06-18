@@ -1,3 +1,4 @@
+import { isResolvedRewrite } from '../../next-rewrites-guard.cjs';
 //@ts-check
 
 // eslint-disable-next-line @typescript-eslint/no-var-requires
@@ -88,7 +89,8 @@ const nextConfig = {
         source: '/sunbird-plugins/renderer/:path*',
         destination: `${process.env.NEXT_PUBLIC_WORKSPACE_BASE_URL}/sunbird-plugins/renderer/:path*`,
       },
-    ];
+    ]
+      .filter(isResolvedRewrite);
   },
 };
 

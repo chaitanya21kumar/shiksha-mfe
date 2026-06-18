@@ -1,3 +1,4 @@
+const { isResolvedRewrite } = require('../../next-rewrites-guard.cjs');
 //@ts-check
 
 // eslint-disable-next-line @typescript-eslint/no-var-requires
@@ -116,7 +117,8 @@ const nextConfig = {
         source: routes.API.GENERAL.CONTENT_PREVIEW,
         destination: `${PORTAL_BASE_URL}${routes.API.GENERAL.CONTENT_PREVIEW}`, // Proxy to portal
       },
-    ];
+    ]
+      .filter(isResolvedRewrite);
   },
 };
 
