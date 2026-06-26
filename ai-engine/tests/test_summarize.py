@@ -7,6 +7,7 @@ prompt to decide which section is being asked for, which lets one handler serve
 all three generations and lets a test fail just one of them.
 """
 
+import asyncio
 import json
 from datetime import datetime, timezone
 
@@ -151,7 +152,7 @@ def _no_sleep(monkeypatch):
     import app.summarization.llm_client as llm_client
 
     async def _instant(_seconds: float) -> None:
-        return None
+        await asyncio.sleep(0)
 
     monkeypatch.setattr(llm_client, "_sleep", _instant)
 
@@ -233,6 +234,25 @@ def test_summarize_coerces_list_summary_to_string(use_model):
     body = resp.json()
     assert body["summary"] == "First sentence. Second sentence."
     assert body["warnings"] == []
+
+
+def test_summarize_handles_malformed_choices(use_model):
+    # A gateway reply whose "choices" is not a well-formed list must degrade to a
+    # warning, never crash with an AttributeError/TypeError.
+    def handler(request: httpx.Request) -> httpx.Response:
+        section = _section_of(request)
+        if section == "summary":
+            return httpx.Response(200, json={"choices": "not-a-list"})
+        return _chat_response(json.dumps(_SECTION_CONTENT[section]))
+
+    use_model(handler)
+    resp = client.post("/summarize", json=_sample_document().model_dump(mode="json"))
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["summary"] == ""
+    assert body["glossary"]  # the well-formed sections still came through
+    assert any("summary" in warning for warning in body["warnings"])
 
 
 def test_summarize_file_parses_then_enriches(use_model):

@@ -124,9 +124,10 @@ def _extract_content(response: httpx.Response) -> dict[str, Any]:
     except ValueError as exc:  # includes json.JSONDecodeError
         raise LLMBadResponse(f"Gateway response body was not JSON: {exc}") from exc
     choices = body.get("choices") if isinstance(body, dict) else None
-    if not choices:
+    if not isinstance(choices, list) or not choices:
         raise LLMBadResponse("Gateway response contained no choices.")
-    content = (choices[0].get("message") or {}).get("content")
+    message = choices[0].get("message") if isinstance(choices[0], dict) else None
+    content = message.get("content") if isinstance(message, dict) else None
     if not content:
         raise LLMBadResponse("Gateway response contained no message content.")
     try:

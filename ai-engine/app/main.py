@@ -12,11 +12,13 @@ import logging
 from contextlib import asynccontextmanager
 
 import httpx
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
 from .config import settings
 from .ingestion.router import router as ingestion_router
+from .summarization.llm_client import LLMTimeout, LLMUnavailable
+from .summarization.pipeline import EmptyDocumentError
 from .summarization.router import router as summarization_router
 
 logger = logging.getLogger("ai_engine")
@@ -91,6 +93,20 @@ def create_app() -> FastAPI:
             status_code=200 if is_ready else 503,
             content={"ready": is_ready, "components": components},
         )
+
+    # Map the summarisation pipeline's domain errors to the documented responses,
+    # so the endpoints stay thin and never raise transport-layer exceptions themselves.
+    @app.exception_handler(EmptyDocumentError)
+    async def _on_empty_document(request: Request, exc: EmptyDocumentError) -> JSONResponse:
+        return JSONResponse(status_code=400, content={"detail": str(exc)})
+
+    @app.exception_handler(LLMUnavailable)
+    async def _on_llm_unavailable(request: Request, exc: LLMUnavailable) -> JSONResponse:
+        return JSONResponse(status_code=503, content={"detail": str(exc)})
+
+    @app.exception_handler(LLMTimeout)
+    async def _on_llm_timeout(request: Request, exc: LLMTimeout) -> JSONResponse:
+        return JSONResponse(status_code=504, content={"detail": str(exc)})
 
     app.include_router(ingestion_router)
     app.include_router(summarization_router)

@@ -7,7 +7,10 @@ Two ways in, same output:
 - ``POST /summarize/file`` takes a raw PDF/PPTX upload and does both steps in one
   call — convenient for quick checks and live demos.
 
-The model client comes from a dependency so it can be swapped for a fake in tests.
+The endpoints stay thin: the pipeline raises domain errors (empty document,
+gateway unavailable, timeout) and app-level exception handlers map those to the
+documented HTTP responses. The model client comes from a dependency so it can be
+swapped for a fake in tests.
 """
 
 from __future__ import annotations
@@ -20,8 +23,7 @@ from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile
 from ..config import settings
 from ..ingestion.schema import ParsedDocument
 from ..ingestion.service import parse_upload
-from .llm_client import LLMTimeout, LLMUnavailable
-from .pipeline import EmptyDocumentError, GenerationConfig, generate_insights
+from .pipeline import GenerationConfig, generate_insights
 from .schema import DocumentInsights
 
 router = APIRouter(tags=["summarization"])
@@ -52,25 +54,13 @@ def _generation_config() -> GenerationConfig:
     )
 
 
-async def _summarize(client: httpx.AsyncClient, document: ParsedDocument) -> DocumentInsights:
-    """Run the pipeline and translate its failures into HTTP errors."""
-    try:
-        return await generate_insights(client, document, _generation_config())
-    except EmptyDocumentError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-    except LLMUnavailable as exc:
-        raise HTTPException(status_code=503, detail=str(exc)) from exc
-    except LLMTimeout as exc:
-        raise HTTPException(status_code=504, detail=str(exc)) from exc
-
-
 @router.post("/summarize", responses=_ERROR_RESPONSES)
 async def summarize(
     document: ParsedDocument,
     client: Annotated[httpx.AsyncClient, Depends(get_llm_client)],
 ) -> DocumentInsights:
     """Derive insights from an already-parsed document."""
-    return await _summarize(client, document)
+    return await generate_insights(client, document, _generation_config())
 
 
 @router.post("/summarize/file", responses={**_ERROR_RESPONSES, 415: {"description": "Unsupported file type"}})
@@ -80,4 +70,4 @@ async def summarize_file(
 ) -> DocumentInsights:
     """Parse an uploaded PDF/PPTX and derive insights in one call."""
     document = await parse_upload(file)
-    return await _summarize(client, document)
+    return await generate_insights(client, document, _generation_config())
