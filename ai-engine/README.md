@@ -4,8 +4,11 @@ A local-first, **LMS-agnostic** service that turns documents, slides, audio and
 video into structured, interactive micro-learning — emitted as portable open
 standards (**H5P / SCORM / xAPI** + JSON) so any LMS can consume it.
 
-All inference runs on self-hosted open models via [Ollama](https://ollama.com)
-(Llama 3, Whisper) — **no external AI APIs** in the default path.
+Inference goes through an **OpenAI-compatible model interface**, so it can run
+against a local [Ollama](https://ollama.com) (the default — offline, no keys) or
+a hosted provider during development, and move to **self-hosted** open models for
+production (Llama 3, Whisper) without changing the pipeline. See
+[`docs/adr/0002`](docs/adr/0002-hosted-model-apis-for-development.md).
 
 > Implements [tekdi/shiksha-mfe#7](https://github.com/tekdi/shiksha-mfe/issues/7).
 > See [`docs/adr/0001-standalone-lms-agnostic-engine.md`](docs/adr/0001-standalone-lms-agnostic-engine.md)
@@ -22,13 +25,17 @@ All inference runs on self-hosted open models via [Ollama](https://ollama.com)
 
 Phase 1 was the FastAPI gateway and system probes. **Module A.1** (document
 ingestion — PDF and PPTX into structured JSON, exposed at `POST /ingest`) is
-built on top of it; the later modules follow.
+built on top of it. **Module A.2** (summarisation) adds a local-LLM layer over a
+parsed document, deriving a summary, key takeaways, a glossary, and a course
+outline via Ollama, exposed at `POST /summarize` and `POST /summarize/file`. The
+later modules follow.
 
 ## Requirements
 
 - Python 3.11+ (developed on 3.12)
-- [Ollama](https://ollama.com) running locally with `llama3.2:3b` and `llama3:8b`
-- PostgreSQL and Redis (the dev `c4gt-postgres` / `c4gt-redis` containers)
+- An OpenAI-compatible model endpoint — either a local [Ollama](https://ollama.com)
+  with `llama3.2:3b` (the default), or a hosted provider such as Groq (configure
+  `AI_ENGINE_LLM_*`; see [`.env.example`](.env.example))
 
 ## Run it
 
@@ -46,6 +53,9 @@ Then:
 
 - `GET /health` — liveness (no dependencies touched)
 - `GET /ready` — readiness (checks the Ollama gateway is reachable)
+- `POST /ingest` — parse a PDF/PPTX into structured JSON
+- `POST /summarize` — derive insights from an already-parsed document
+- `POST /summarize/file` — parse a PDF/PPTX and derive insights in one call
 - `GET /docs` — interactive API docs
 
 ## Test
