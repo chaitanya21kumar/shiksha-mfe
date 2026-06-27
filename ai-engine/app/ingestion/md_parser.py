@@ -1,0 +1,145 @@
+"""Parse a Markdown (.md) file into a `ParsedDocument`.
+
+Markdown maps almost directly onto the block schema: ATX headings become heading
+blocks, lists become list blocks, GFM tables become table blocks, fenced code
+becomes a paragraph block (so it is not lost), and everything else is a
+paragraph. The file is one ``document`` page. Inline markup (bold, links, …) is
+flattened to plain text, which is what the downstream modules want.
+"""
+
+from __future__ import annotations
+
+from datetime import datetime, timezone
+from importlib.metadata import version
+from pathlib import Path
+
+from markdown_it import MarkdownIt
+from markdown_it.token import Token
+
+from .schema import Block, BlockKind, Page, ParsedDocument, SourceInfo
+from .textio import read_text
+
+_PARSER = "markdown-it-py"
+
+
+def _parser_version() -> str:
+    try:
+        return version("markdown-it-py")
+    except Exception:  # pragma: no cover - metadata always present in practice
+        return "unknown"
+
+
+def _inline_plain(token: Token | None) -> str:
+    """Flatten an inline token to plain text, dropping markup."""
+    if token is None or token.type != "inline":
+        return ""
+    if not token.children:
+        return token.content.strip()
+    parts: list[str] = []
+    for child in token.children:
+        if child.type in ("text", "code_inline", "image"):
+            parts.append(child.content)
+        elif child.type in ("softbreak", "hardbreak"):
+            parts.append(" ")
+    return "".join(parts).strip()
+
+
+def _collect_list_items(tokens: list[Token], start: int) -> tuple[list[str], int]:
+    """Collect a list's item texts; returns (items, index after the list)."""
+    items: list[str] = []
+    current: list[str] = []
+    in_item = False
+    depth = 0
+    i = start
+    while i < len(tokens):
+        t = tokens[i].type
+        if t in ("bullet_list_open", "ordered_list_open"):
+            depth += 1
+        elif t in ("bullet_list_close", "ordered_list_close"):
+            depth -= 1
+            if depth == 0:
+                return items, i + 1
+        elif t == "list_item_open" and depth == 1:
+            current, in_item = [], True
+        elif t == "list_item_close" and depth == 1:
+            text = " ".join(p for p in current if p).strip()
+            if text:
+                items.append(text)
+            in_item = False
+        elif t == "inline" and in_item:
+            current.append(_inline_plain(tokens[i]))
+        i += 1
+    return items, i
+
+
+def _collect_table_rows(tokens: list[Token], start: int) -> tuple[list[list[str]], int]:
+    """Collect a table's rows; returns (rows, index after the table)."""
+    rows: list[list[str]] = []
+    current: list[str] | None = None
+    i = start
+    while i < len(tokens):
+        t = tokens[i].type
+        if t == "tr_open":
+            current = []
+        elif t == "tr_close":
+            if current:
+                rows.append(current)
+            current = None
+        elif t == "inline" and current is not None:
+            current.append(_inline_plain(tokens[i]))
+        elif t == "table_close":
+            return rows, i + 1
+        i += 1
+    return rows, i
+
+
+def parse_md(path: str | Path) -> ParsedDocument:
+    """Read a Markdown file and return its structured representation."""
+    text, warnings = read_text(path)
+    tokens = MarkdownIt("commonmark").enable("table").parse(text)
+
+    blocks: list[Block] = []
+    title: str | None = None
+    i = 0
+    while i < len(tokens):
+        tok = tokens[i]
+        if tok.type == "heading_open":
+            content = _inline_plain(tokens[i + 1]) if i + 1 < len(tokens) else ""
+            level = int(tok.tag[1:]) if tok.tag[1:].isdigit() else 1
+            if content:
+                blocks.append(Block(kind=BlockKind.heading, text=content, level=level))
+                if title is None and level == 1:
+                    title = content
+            i += 3
+        elif tok.type == "paragraph_open":
+            content = _inline_plain(tokens[i + 1]) if i + 1 < len(tokens) else ""
+            if content:
+                blocks.append(Block(kind=BlockKind.paragraph, text=content))
+            i += 3
+        elif tok.type in ("bullet_list_open", "ordered_list_open"):
+            items, i = _collect_list_items(tokens, i)
+            if items:
+                blocks.append(Block(kind=BlockKind.list, items=items))
+        elif tok.type == "table_open":
+            rows, i = _collect_table_rows(tokens, i)
+            if rows:
+                blocks.append(Block(kind=BlockKind.table, rows=rows))
+        elif tok.type in ("fence", "code_block"):
+            code = tok.content.rstrip("\n")
+            if code:
+                blocks.append(Block(kind=BlockKind.paragraph, text=code))
+            i += 1
+        else:
+            i += 1
+
+    if not blocks:
+        warnings.append("The file contained no readable text.")
+
+    return ParsedDocument(
+        source=SourceInfo(filename=Path(path).name, format="md", page_count=1, title=title),
+        parser=_PARSER,
+        parser_version=_parser_version(),
+        parsed_at=datetime.now(timezone.utc),
+        pages=[Page(index=1, kind="document", blocks=blocks)],
+        warnings=warnings,
+    )
