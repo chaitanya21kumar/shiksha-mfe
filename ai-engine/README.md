@@ -18,14 +18,14 @@ production (Llama 3, Whisper) without changing the pipeline. See
 
 | Module | Scope |
 |---|---|
-| **A — Document Ingestion** | PDF / PPT → structured JSON; summaries, glossary, narration scripts |
+| **A — Document Ingestion** | PDF, PPTX, DOCX, CSV, TXT, Markdown, HTML → structured JSON; summaries, glossary, narration scripts |
 | **B — Assessment Suite** | MCQ / match-the-pair / fill-in-the-blanks → H5P + SCORM |
 | **C — Multimedia Intelligence** | Whisper transcription, chaptering → H5P Interactive Video |
 | **D — Micro-Learning Studio** | Assemble H5P / SCORM / HTML5 lessons; tenant branding; review gate |
 
 Phase 1 was the FastAPI gateway and system probes. **Module A.1** (document
-ingestion — PDF and PPTX into structured JSON, exposed at `POST /ingest`) is
-built on top of it. **Module A.2** (summarisation) adds a local-LLM layer over a
+ingestion — PDF, PPTX, DOCX, CSV, TXT, Markdown and HTML into one structured
+JSON shape, exposed at `POST /ingest`) is built on top of it. **Module A.2** (summarisation) adds a local-LLM layer over a
 parsed document, deriving a summary, key takeaways, a glossary, and a course
 outline via Ollama, exposed at `POST /summarize` and `POST /summarize/file`. The
 later modules follow.
