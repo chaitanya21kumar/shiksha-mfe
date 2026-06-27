@@ -55,42 +55,71 @@ def _table_rows(table: Tag) -> list[list[str]]:
     return rows
 
 
+def _emit_heading(el: Tag, blocks: list[Block], counter: list[int]) -> None:
+    text = el.get_text(" ", strip=True)
+    if text:
+        blocks.append(Block(kind=BlockKind.heading, text=text, level=int(el.name[1])))
+
+
+def _emit_paragraph(el: Tag, blocks: list[Block], counter: list[int]) -> None:
+    text = el.get_text(" ", strip=True)
+    if text:
+        blocks.append(Block(kind=BlockKind.paragraph, text=text))
+    for img in el.find_all("img"):
+        counter[0] += 1
+        blocks.append(_image_block(img, counter[0]))
+
+
+def _emit_list(el: Tag, blocks: list[Block], counter: list[int]) -> None:
+    items = [li.get_text(" ", strip=True) for li in el.find_all("li", recursive=False)]
+    items = [it for it in items if it]
+    if items:
+        blocks.append(Block(kind=BlockKind.list, items=items))
+
+
+def _emit_table(el: Tag, blocks: list[Block], counter: list[int]) -> None:
+    rows = _table_rows(el)
+    if rows:
+        blocks.append(Block(kind=BlockKind.table, rows=rows))
+
+
+def _emit_pre(el: Tag, blocks: list[Block], counter: list[int]) -> None:
+    text = el.get_text("\n", strip=True)
+    if text:
+        blocks.append(Block(kind=BlockKind.paragraph, text=text))
+
+
+def _emit_blockquote(el: Tag, blocks: list[Block], counter: list[int]) -> None:
+    text = el.get_text(" ", strip=True)
+    if text:
+        blocks.append(Block(kind=BlockKind.paragraph, text=text))
+
+
+def _emit_image(el: Tag, blocks: list[Block], counter: list[int]) -> None:
+    counter[0] += 1
+    blocks.append(_image_block(el, counter[0]))
+
+
+_HANDLERS = {
+    "p": _emit_paragraph,
+    "ul": _emit_list,
+    "ol": _emit_list,
+    "table": _emit_table,
+    "pre": _emit_pre,
+    "blockquote": _emit_blockquote,
+    "img": _emit_image,
+}
+
+
 def _walk(node: Tag, blocks: list[Block], counter: list[int]) -> None:
     for child in node.children:
         if not isinstance(child, Tag):
             continue
         name = (child.name or "").lower()
         if name in _HEADINGS:
-            text = child.get_text(" ", strip=True)
-            if text:
-                blocks.append(Block(kind=BlockKind.heading, text=text, level=int(name[1])))
-        elif name == "p":
-            text = child.get_text(" ", strip=True)
-            if text:
-                blocks.append(Block(kind=BlockKind.paragraph, text=text))
-            for img in child.find_all("img"):
-                counter[0] += 1
-                blocks.append(_image_block(img, counter[0]))
-        elif name in ("ul", "ol"):
-            items = [li.get_text(" ", strip=True) for li in child.find_all("li", recursive=False)]
-            items = [it for it in items if it]
-            if items:
-                blocks.append(Block(kind=BlockKind.list, items=items))
-        elif name == "table":
-            rows = _table_rows(child)
-            if rows:
-                blocks.append(Block(kind=BlockKind.table, rows=rows))
-        elif name == "pre":
-            text = child.get_text("\n", strip=True)
-            if text:
-                blocks.append(Block(kind=BlockKind.paragraph, text=text))
-        elif name == "blockquote":
-            text = child.get_text(" ", strip=True)
-            if text:
-                blocks.append(Block(kind=BlockKind.paragraph, text=text))
-        elif name == "img":
-            counter[0] += 1
-            blocks.append(_image_block(child, counter[0]))
+            _emit_heading(child, blocks, counter)
+        elif name in _HANDLERS:
+            _HANDLERS[name](child, blocks, counter)
         else:
             _walk(child, blocks, counter)
 

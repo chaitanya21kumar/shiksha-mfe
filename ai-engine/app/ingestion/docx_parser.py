@@ -61,6 +61,25 @@ def _image_count(para: Paragraph) -> int:
     return sum(1 for _ in para._p.iter(qn("w:drawing")))
 
 
+def _table_block(table: Table) -> Block | None:
+    rows = [[cell.text.strip() for cell in row.cells] for row in table.rows]
+    return Block(kind=BlockKind.table, rows=rows) if rows else None
+
+
+def _emit_images(blocks: list[Block], count: int, start_index: int) -> int:
+    for _ in range(count):
+        start_index += 1
+        blocks.append(Block(kind=BlockKind.image, image=ImageRef(id=f"img{start_index}")))
+    return start_index
+
+
+def _paragraph_block(item: Paragraph, text: str) -> Block:
+    level = _heading_level(item)
+    if level is not None:
+        return Block(kind=BlockKind.heading, text=text, level=level)
+    return Block(kind=BlockKind.paragraph, text=text)
+
+
 def parse_docx(path: str | Path) -> ParsedDocument:
     """Read a .docx file and return its structured representation."""
     document = docx.Document(str(path))
@@ -77,26 +96,22 @@ def parse_docx(path: str | Path) -> ParsedDocument:
     for item in _iter_block_items(document):
         if isinstance(item, Table):
             flush_list()
-            rows = [[cell.text.strip() for cell in row.cells] for row in item.rows]
-            if rows:
-                blocks.append(Block(kind=BlockKind.table, rows=rows))
+            block = _table_block(item)
+            if block:
+                blocks.append(block)
             continue
 
         text = item.text.strip()
-        level = _heading_level(item)
-        if level is not None and text:
-            flush_list()
-            blocks.append(Block(kind=BlockKind.heading, text=text, level=level))
-        elif _is_list_item(item) and text:
+        if text and _heading_level(item) is None and _is_list_item(item):
             list_buffer.append(text)
         elif text:
             flush_list()
-            blocks.append(Block(kind=BlockKind.paragraph, text=text))
+            blocks.append(_paragraph_block(item, text))
 
-        for _ in range(_image_count(item)):
+        images = _image_count(item)
+        if images:
             flush_list()
-            image_index += 1
-            blocks.append(Block(kind=BlockKind.image, image=ImageRef(id=f"img{image_index}")))
+            image_index = _emit_images(blocks, images, image_index)
     flush_list()
 
     props = document.core_properties
