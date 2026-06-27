@@ -127,6 +127,28 @@ def test_docx_headings_lists_tables(tmp_path):
     assert _block(doc, "table")[0].rows[0] == ["h1", "h2"]
 
 
+def test_markdown_table_preserves_empty_cells(tmp_path):
+    f = tmp_path / "t2.md"
+    f.write_text("| a | b |\n|---|---|\n| | 2 |\n", encoding="utf-8")
+    doc = parse_md(f)
+
+    table = _block(doc, "table")[0]
+    assert table.rows[0] == ["a", "b"]
+    assert table.rows[1] == ["", "2"]  # empty first cell kept, columns aligned
+
+
+def test_html_paragraph_with_image_keeps_both(tmp_path):
+    f = tmp_path / "pimg.html"
+    f.write_text(
+        "<html><body><p>See the chart <img src='c.png' alt='chart'></p></body></html>",
+        encoding="utf-8",
+    )
+    doc = parse_html(f)
+
+    kinds = _kinds(doc)
+    assert "paragraph" in kinds and "image" in kinds
+
+
 # ---------------------------------------------------------------- endpoint wiring
 def test_ingest_accepts_csv(tmp_path):
     resp = client.post("/ingest", files={"file": ("x.csv", b"a,b\n1,2\n", "text/csv")})

@@ -39,10 +39,10 @@ def _iter_block_items(document) -> Iterator[Paragraph | Table]:
 def _heading_level(para: Paragraph) -> int | None:
     name = para.style.name or ""
     if name.startswith("Heading "):
-        try:
-            return min(int(name.split()[1]), 6)
-        except ValueError:
-            return 1
+        parts = name.split()
+        if len(parts) > 1 and parts[1].isdigit():
+            return min(int(parts[1]), 6)
+        return 1
     if name == "Title":
         return 1
     if name == "Subtitle":

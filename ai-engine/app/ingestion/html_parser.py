@@ -68,10 +68,9 @@ def _walk(node: Tag, blocks: list[Block], counter: list[int]) -> None:
             text = child.get_text(" ", strip=True)
             if text:
                 blocks.append(Block(kind=BlockKind.paragraph, text=text))
-            else:
-                for img in child.find_all("img"):
-                    counter[0] += 1
-                    blocks.append(_image_block(img, counter[0]))
+            for img in child.find_all("img"):
+                counter[0] += 1
+                blocks.append(_image_block(img, counter[0]))
         elif name in ("ul", "ol"):
             items = [li.get_text(" ", strip=True) for li in child.find_all("li", recursive=False)]
             items = [it for it in items if it]

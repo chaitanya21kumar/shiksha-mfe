@@ -73,20 +73,27 @@ def _collect_list_items(tokens: list[Token], start: int) -> tuple[list[str], int
 
 
 def _collect_table_rows(tokens: list[Token], start: int) -> tuple[list[list[str]], int]:
-    """Collect a table's rows; returns (rows, index after the table)."""
+    """Collect a table's rows, preserving empty cells; returns (rows, index after)."""
     rows: list[list[str]] = []
-    current: list[str] | None = None
+    row: list[str] | None = None
+    cell: str | None = None
     i = start
     while i < len(tokens):
         t = tokens[i].type
         if t == "tr_open":
-            current = []
+            row = []
         elif t == "tr_close":
-            if current:
-                rows.append(current)
-            current = None
-        elif t == "inline" and current is not None:
-            current.append(_inline_plain(tokens[i]))
+            if row:
+                rows.append(row)
+            row = None
+        elif t in ("th_open", "td_open"):
+            cell = ""
+        elif t in ("th_close", "td_close"):
+            if row is not None:
+                row.append(cell or "")
+            cell = None
+        elif t == "inline" and cell is not None:
+            cell = _inline_plain(tokens[i])
         elif t == "table_close":
             return rows, i + 1
         i += 1

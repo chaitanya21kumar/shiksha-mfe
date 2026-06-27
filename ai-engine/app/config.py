@@ -8,6 +8,7 @@ a managed API.
 
 from __future__ import annotations
 
+from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from . import __version__
@@ -46,6 +47,12 @@ class Settings(BaseSettings):
     # oversized upload is rejected (413) before it can exhaust memory or fill the
     # disk. 25 MiB comfortably covers long PDFs and slide decks.
     max_upload_bytes: int = 25 * 1024 * 1024
+
+    @field_validator("llm_base_url")
+    @classmethod
+    def _strip_trailing_slash(cls, value: str) -> str:
+        # A trailing slash would produce a double slash when building request URLs.
+        return value.rstrip("/")
 
 
 settings = Settings()
