@@ -73,11 +73,19 @@ def _emit_images(blocks: list[Block], count: int, start_index: int) -> int:
     return start_index
 
 
-def _paragraph_block(item: Paragraph, text: str) -> Block:
+def _classify(item: Paragraph | Table) -> tuple[str, Block | str | None]:
+    """Map one body item to (kind, value): a Block, a list-item's text, or None."""
+    if isinstance(item, Table):
+        return "block", _table_block(item)
+    text = item.text.strip()
+    if not text:
+        return "empty", None
     level = _heading_level(item)
     if level is not None:
-        return Block(kind=BlockKind.heading, text=text, level=level)
-    return Block(kind=BlockKind.paragraph, text=text)
+        return "block", Block(kind=BlockKind.heading, text=text, level=level)
+    if _is_list_item(item):
+        return "list", text
+    return "block", Block(kind=BlockKind.paragraph, text=text)
 
 
 def parse_docx(path: str | Path) -> ParsedDocument:
@@ -94,24 +102,16 @@ def parse_docx(path: str | Path) -> ParsedDocument:
             list_buffer = []
 
     for item in _iter_block_items(document):
-        if isinstance(item, Table):
+        kind, value = _classify(item)
+        if kind == "list":
+            list_buffer.append(value)
+        else:
             flush_list()
-            block = _table_block(item)
-            if block:
-                blocks.append(block)
-            continue
-
-        text = item.text.strip()
-        if text and _heading_level(item) is None and _is_list_item(item):
-            list_buffer.append(text)
-        elif text:
+            if isinstance(value, Block):
+                blocks.append(value)
+        if not isinstance(item, Table) and _image_count(item):
             flush_list()
-            blocks.append(_paragraph_block(item, text))
-
-        images = _image_count(item)
-        if images:
-            flush_list()
-            image_index = _emit_images(blocks, images, image_index)
+            image_index = _emit_images(blocks, _image_count(item), image_index)
     flush_list()
 
     props = document.core_properties
