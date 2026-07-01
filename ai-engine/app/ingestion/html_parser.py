@@ -2,8 +2,10 @@
 
 The DOM is walked in document order: headings, paragraphs, lists, tables and
 images become the matching blocks, and unknown wrapper elements (div, section,
-article, …) are descended into. Script, style and head content is dropped first.
-The page is one ``document``; the HTML title, if any, becomes the source title.
+article, …) are descended into. Script, style, head and embedded-object
+elements (iframe, svg, object, embed, template) are dropped first, so no active
+or non-text content reaches the output. The page is one ``document``; the HTML
+title, if any, becomes the source title.
 """
 
 from __future__ import annotations
@@ -19,6 +21,10 @@ from .textio import read_text
 
 _PARSER = "beautifulsoup4"
 _HEADINGS = {"h1", "h2", "h3", "h4", "h5", "h6"}
+# Dropped before walking: script/style/head carry no readable content, and
+# iframe/svg/object/embed/template are active or embedded-object elements whose
+# markup we never render and don't want leaking into the extracted text.
+_DROP_TAGS = ["script", "style", "noscript", "head", "iframe", "svg", "object", "embed", "template"]
 
 
 def _parser_version() -> str:
@@ -127,7 +133,7 @@ def parse_html(path: str | Path) -> ParsedDocument:
     text, warnings = read_text(path)
     soup = BeautifulSoup(text, "html.parser")
     title = soup.title.get_text(strip=True) if soup.title else None
-    for tag in soup(["script", "style", "noscript", "head"]):
+    for tag in soup(_DROP_TAGS):
         tag.decompose()
 
     blocks: list[Block] = []

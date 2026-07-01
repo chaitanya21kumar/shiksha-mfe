@@ -149,6 +149,26 @@ def test_html_paragraph_with_image_keeps_both(tmp_path):
     assert "paragraph" in kinds and "image" in kinds
 
 
+def test_html_strips_embedded_and_active_elements(tmp_path):
+    f = tmp_path / "embed.html"
+    f.write_text(
+        "<html><body>"
+        "<p>Real content.</p>"
+        "<iframe src='https://other.example'>frame text</iframe>"
+        "<svg><text>svg junk</text></svg>"
+        "<object>object junk</object>"
+        "<style>.x{color:red}</style>"
+        "</body></html>",
+        encoding="utf-8",
+    )
+    doc = parse_html(f)
+
+    all_text = " ".join((b.text or "") for page in doc.pages for b in page.blocks)
+    assert "Real content." in all_text
+    for leaked in ("frame text", "svg junk", "object junk", "color:red"):
+        assert leaked not in all_text
+
+
 # ---------------------------------------------------------------- endpoint wiring
 def test_ingest_accepts_csv(tmp_path):
     resp = client.post("/ingest", files={"file": ("x.csv", b"a,b\n1,2\n", "text/csv")})
