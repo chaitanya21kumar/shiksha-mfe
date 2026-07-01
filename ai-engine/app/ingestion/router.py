@@ -1,9 +1,9 @@
 """HTTP surface for document ingestion.
 
-`POST /ingest` accepts an uploaded PDF or PPTX and returns the structured
-`ParsedDocument`. The transport layer stays thin: all the real work — picking a
-parser, streaming to disk, parsing in a worker thread — lives in
-`service.parse_upload`.
+`POST /ingest` accepts an uploaded document (any format registered in
+`service.PARSERS`) and returns the structured `ParsedDocument`. The transport
+layer stays thin: all the real work — picking a parser, streaming to disk,
+parsing in a worker thread — lives in `service.parse_upload`.
 """
 
 from __future__ import annotations
@@ -26,5 +26,5 @@ router = APIRouter(tags=["ingestion"])
     },
 )
 async def ingest(file: Annotated[UploadFile, File()]) -> ParsedDocument:
-    """Parse an uploaded PDF or PPTX into a structured document."""
+    """Parse an uploaded document into a structured `ParsedDocument`."""
     return await parse_upload(file)

@@ -68,11 +68,12 @@ def _parse_to_tempfile(parser: Parser, upload: UploadFile, suffix: str) -> Parse
 
 
 async def parse_upload(file: UploadFile) -> ParsedDocument:
-    """Parse an uploaded PDF or PPTX, or raise the right HTTP error.
+    """Parse an uploaded file into a `ParsedDocument`, or raise the right HTTP error.
 
-    415 if the extension is unsupported; 413 if it is larger than the configured
-    ceiling; 400 if it is a known type whose bytes could not be parsed. The
-    transport layer stays thin: callers just await this.
+    The extension picks the parser from ``PARSERS``. 415 if the extension is
+    unsupported; 413 if the file is larger than the configured ceiling; 400 if it
+    is a known type whose bytes could not be parsed. The transport layer stays
+    thin: callers just await this.
     """
     suffix = Path(file.filename or "").suffix.lower()
     parser = PARSERS.get(suffix)

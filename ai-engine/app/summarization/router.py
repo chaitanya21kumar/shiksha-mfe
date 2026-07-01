@@ -4,8 +4,9 @@ Two ways in, same output:
 
 - ``POST /summarize`` takes a `ParsedDocument` (the output of ``/ingest``) and
   returns its `DocumentInsights`. Composable: ingest once, enrich many times.
-- ``POST /summarize/file`` takes a raw PDF/PPTX upload and does both steps in one
-  call — convenient for quick checks and live demos.
+- ``POST /summarize/file`` takes a raw file upload (any supported document
+  format) and does both steps in one call — convenient for quick checks and live
+  demos.
 
 The endpoints stay thin: the pipeline raises domain errors (empty document,
 gateway unavailable, timeout) and app-level exception handlers map those to the
@@ -68,6 +69,6 @@ async def summarize_file(
     file: Annotated[UploadFile, File()],
     client: Annotated[httpx.AsyncClient, Depends(get_llm_client)],
 ) -> DocumentInsights:
-    """Parse an uploaded PDF/PPTX and derive insights in one call."""
+    """Parse an uploaded document and derive insights in one call."""
     document = await parse_upload(file)
     return await generate_insights(client, document, _generation_config())

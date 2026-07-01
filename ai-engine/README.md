@@ -52,7 +52,7 @@ uvicorn app.main:app --reload --port 8000
 Then:
 
 - `GET /health` — liveness (no dependencies touched)
-- `GET /ready` — readiness (checks the Ollama gateway is reachable)
+- `GET /ready` — readiness (checks the configured model gateway is reachable)
 - `POST /ingest` — parse a PDF/PPTX into structured JSON
 - `POST /summarize` — derive insights from an already-parsed document
 - `POST /summarize/file` — parse a PDF/PPTX and derive insights in one call
