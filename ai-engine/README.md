@@ -25,10 +25,11 @@ production (Llama 3, Whisper) without changing the pipeline. See
 
 Phase 1 was the FastAPI gateway and system probes. **Module A.1** (document
 ingestion — PDF, PPTX, DOCX, CSV, TXT, Markdown and HTML into one structured
-JSON shape, exposed at `POST /ingest`) is built on top of it. **Module A.2** (summarisation) adds a local-LLM layer over a
-parsed document, deriving a summary, key takeaways, a glossary, and a course
-outline via Ollama, exposed at `POST /summarize` and `POST /summarize/file`. The
-later modules follow.
+JSON shape, exposed at `POST /ingest`) is built on top of it. **Module A.2**
+(summarisation) adds a layer over a parsed document, deriving a summary, key
+takeaways, a glossary, and a course outline via a configurable OpenAI-compatible
+model gateway, exposed at `POST /summarize` and `POST /summarize/file`. The later
+modules follow.
 
 ## Requirements
 
@@ -53,9 +54,9 @@ Then:
 
 - `GET /health` — liveness (no dependencies touched)
 - `GET /ready` — readiness (checks the configured model gateway is reachable)
-- `POST /ingest` — parse a PDF/PPTX into structured JSON
+- `POST /ingest` — parse a document (PDF, PPTX, DOCX, CSV, TXT, Markdown, HTML) into structured JSON
 - `POST /summarize` — derive insights from an already-parsed document
-- `POST /summarize/file` — parse a PDF/PPTX and derive insights in one call
+- `POST /summarize/file` — parse a document and derive insights in one call
 - `GET /docs` — interactive API docs
 
 ## Test
