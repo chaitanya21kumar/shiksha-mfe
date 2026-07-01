@@ -45,3 +45,18 @@ def test_ingest_rejects_corrupt_file():
     )
     assert resp.status_code == 400
     assert "parse" in resp.json()["detail"].lower()
+
+
+def test_ingest_rejects_oversized_file(monkeypatch):
+    # An upload past the size ceiling is rejected with 413 while streaming,
+    # before the parser ever runs.
+    import app.ingestion.service as service
+
+    monkeypatch.setattr(service.settings, "max_upload_bytes", 1024)
+    payload = b"%PDF-1.4\n" + b"0" * 4096
+    resp = client.post(
+        "/ingest",
+        files={"file": ("big.pdf", payload, "application/pdf")},
+    )
+    assert resp.status_code == 413
+    assert "size" in resp.json()["detail"].lower()

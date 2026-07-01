@@ -42,5 +42,10 @@ class Settings(BaseSettings):
     llm_temperature: float = 0.2
     max_source_chars: int = 24000
 
+    # Hard ceiling on an uploaded file, enforced while streaming it to disk so an
+    # oversized upload is rejected (413) before it can exhaust memory or fill the
+    # disk. 25 MiB comfortably covers long PDFs and slide decks.
+    max_upload_bytes: int = 25 * 1024 * 1024
+
 
 settings = Settings()

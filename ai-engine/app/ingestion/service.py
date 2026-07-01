@@ -9,14 +9,14 @@ thin and can never drift apart.
 
 from __future__ import annotations
 
-import shutil
 import tempfile
 from pathlib import Path
-from typing import Callable
+from typing import IO, Callable
 
 from fastapi import HTTPException, UploadFile
 from fastapi.concurrency import run_in_threadpool
 
+from ..config import settings
 from .pdf_parser import parse_pdf
 from .pptx_parser import parse_pptx
 from .schema import ParsedDocument
@@ -27,6 +27,26 @@ PARSERS: dict[str, Parser] = {
     ".pdf": parse_pdf,
     ".pptx": parse_pptx,
 }
+
+_COPY_CHUNK = 1024 * 1024  # 1 MiB
+
+
+class FileTooLargeError(Exception):
+    """The upload exceeded the configured size ceiling."""
+
+
+def _copy_capped(upload: UploadFile, dst: IO[bytes], limit: int) -> None:
+    """Copy the upload to ``dst`` in chunks, aborting once it exceeds ``limit``.
+
+    Enforcing the ceiling as we stream means an oversized file never fully lands
+    in memory or on disk — we stop and raise as soon as the limit is crossed.
+    """
+    copied = 0
+    while chunk := upload.file.read(_COPY_CHUNK):
+        copied += len(chunk)
+        if copied > limit:
+            raise FileTooLargeError(f"File exceeds the maximum upload size of {limit} bytes.")
+        dst.write(chunk)
 
 
 def _parse_to_tempfile(parser: Parser, upload: UploadFile, suffix: str) -> ParsedDocument:
@@ -39,7 +59,7 @@ def _parse_to_tempfile(parser: Parser, upload: UploadFile, suffix: str) -> Parse
     upload.file.seek(0)
     tmp = tempfile.NamedTemporaryFile(suffix=suffix, delete=False)
     try:
-        shutil.copyfileobj(upload.file, tmp)
+        _copy_capped(upload, tmp, settings.max_upload_bytes)
         tmp.close()
         return parser(tmp.name)
     finally:
@@ -50,8 +70,9 @@ def _parse_to_tempfile(parser: Parser, upload: UploadFile, suffix: str) -> Parse
 async def parse_upload(file: UploadFile) -> ParsedDocument:
     """Parse an uploaded PDF or PPTX, or raise the right HTTP error.
 
-    415 if the extension is unsupported; 400 if it is a known type whose bytes
-    could not be parsed. The transport layer stays thin: callers just await this.
+    415 if the extension is unsupported; 413 if it is larger than the configured
+    ceiling; 400 if it is a known type whose bytes could not be parsed. The
+    transport layer stays thin: callers just await this.
     """
     suffix = Path(file.filename or "").suffix.lower()
     parser = PARSERS.get(suffix)
@@ -63,6 +84,8 @@ async def parse_upload(file: UploadFile) -> ParsedDocument:
 
     try:
         document = await run_in_threadpool(_parse_to_tempfile, parser, file, suffix)
+    except FileTooLargeError as exc:
+        raise HTTPException(status_code=413, detail=str(exc)) from exc
     except Exception as exc:  # known type, but the bytes could not be parsed
         raise HTTPException(
             status_code=400, detail=f"Could not parse the uploaded file: {exc}"
