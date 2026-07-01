@@ -78,7 +78,7 @@ def test_generate_insights_raises_on_empty_document():
     # before any call to the model gateway (so the client is never touched).
     empty = _doc([Page(index=1, kind="page", blocks=[])])
     config = GenerationConfig(
-        base_url="http://gateway/v1",
+        base_url="https://gateway/v1",
         api_key="k",
         model="m",
         provider="test",

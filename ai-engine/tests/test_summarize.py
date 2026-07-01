@@ -91,14 +91,18 @@ def _happy_handler(request: httpx.Request) -> httpx.Response:
 @pytest.fixture
 def use_model():
     """Install a fake model gateway backed by the given request handler."""
+    created: list[httpx.AsyncClient] = []
 
     def _install(handler):
         fake = httpx.AsyncClient(transport=httpx.MockTransport(handler), timeout=httpx.Timeout(5.0))
+        created.append(fake)
         app.dependency_overrides[get_llm_client] = lambda: fake
         return fake
 
     yield _install
     app.dependency_overrides.pop(get_llm_client, None)
+    for fake in created:
+        asyncio.run(fake.aclose())
 
 
 def test_summarize_returns_all_sections(use_model):
