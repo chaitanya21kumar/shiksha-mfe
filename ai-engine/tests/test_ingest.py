@@ -32,7 +32,7 @@ def test_ingest_pdf_returns_structured_json():
 
 
 def test_ingest_rejects_unsupported_type():
-    resp = client.post("/ingest", files={"file": ("notes.txt", b"hello", "text/plain")})
+    resp = client.post("/ingest", files={"file": ("archive.zip", b"PK\x03\x04", "application/zip")})
     assert resp.status_code == 415
 
 

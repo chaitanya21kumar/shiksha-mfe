@@ -62,10 +62,15 @@ class Block(BaseModel):
 
 
 class Page(BaseModel):
-    """A single page (PDF) or slide (PPT)."""
+    """One unit of a document.
+
+    A ``page`` (PDF), a ``slide`` (PPT), a ``sheet`` (CSV / spreadsheet), or a
+    ``document`` — a single logical unit for flow formats (DOCX, TXT, Markdown,
+    HTML) that have no native pagination.
+    """
 
     index: int = Field(description="1-based position in the document.")
-    kind: Literal["page", "slide"]
+    kind: Literal["page", "slide", "sheet", "document"]
     blocks: list[Block] = Field(default_factory=list)
     notes: str | None = Field(default=None, description="Speaker notes (PPT slides).")
 
@@ -74,8 +79,10 @@ class SourceInfo(BaseModel):
     """Metadata about the original file."""
 
     filename: str
-    format: Literal["pdf", "pptx"]
-    page_count: int = Field(description="Number of pages (PDF) or slides (PPT).")
+    format: Literal["pdf", "pptx", "docx", "csv", "txt", "md", "html"]
+    page_count: int = Field(
+        description="Number of pages, slides or sheets; 1 for flow documents (DOCX, TXT, Markdown, HTML)."
+    )
     title: str | None = None
     author: str | None = None
     created: datetime | None = None

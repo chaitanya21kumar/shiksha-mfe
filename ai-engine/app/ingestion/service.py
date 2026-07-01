@@ -17,15 +17,27 @@ from fastapi import HTTPException, UploadFile
 from fastapi.concurrency import run_in_threadpool
 
 from ..config import settings
+from .csv_parser import parse_csv
+from .docx_parser import parse_docx
+from .html_parser import parse_html
+from .md_parser import parse_md
 from .pdf_parser import parse_pdf
 from .pptx_parser import parse_pptx
 from .schema import ParsedDocument
+from .txt_parser import parse_txt
 
 Parser = Callable[[str], ParsedDocument]
 
 PARSERS: dict[str, Parser] = {
     ".pdf": parse_pdf,
     ".pptx": parse_pptx,
+    ".docx": parse_docx,
+    ".csv": parse_csv,
+    ".txt": parse_txt,
+    ".md": parse_md,
+    ".markdown": parse_md,
+    ".html": parse_html,
+    ".htm": parse_html,
 }
 
 _COPY_CHUNK = 1024 * 1024  # 1 MiB

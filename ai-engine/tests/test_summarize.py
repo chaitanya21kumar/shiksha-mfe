@@ -275,6 +275,6 @@ def test_summarize_file_parses_then_enriches(use_model):
 def test_summarize_file_rejects_unsupported_type(use_model):
     use_model(_happy_handler)
     resp = client.post(
-        "/summarize/file", files={"file": ("notes.txt", b"hello", "text/plain")}
+        "/summarize/file", files={"file": ("archive.zip", b"PK\x03\x04", "application/zip")}
     )
     assert resp.status_code == 415
