@@ -10,6 +10,7 @@ there is no point asking three times when the gateway is unreachable.
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import TypeVar
@@ -21,6 +22,8 @@ from ..ingestion.schema import Block, BlockKind, ParsedDocument
 from . import prompts
 from .llm_client import LLMBadResponse, chat_json
 from .schema import DocumentInsights, GlossaryTerm, InsightsSource, OutlineSection
+
+logger = logging.getLogger("ai_engine.summarization")
 
 
 class EmptyDocumentError(Exception):
@@ -53,6 +56,12 @@ class _SummaryResponse(BaseModel):
         if value is None:
             return ""
         if isinstance(value, list):
+            # Coercing means the model ignored the requested shape; log it so
+            # repeated drift is visible rather than silently absorbed.
+            logger.warning(
+                "Model returned 'summary' as a list of %d items; joining into one string.",
+                len(value),
+            )
             return " ".join(str(item).strip() for item in value if str(item).strip())
         return value
 
@@ -61,6 +70,7 @@ class _SummaryResponse(BaseModel):
     def _coerce_takeaways(cls, value: object) -> object:
         # Tolerate a single string where a list of points was asked for.
         if isinstance(value, str):
+            logger.warning("Model returned 'key_takeaways' as a string; wrapping it in a list.")
             return [value] if value.strip() else []
         return value
 
@@ -127,6 +137,9 @@ async def _generate_section(
         )
         return response_model.model_validate(raw)
     except (LLMBadResponse, ValidationError) as exc:
+        # Degrade this section to a warning, but log it too: a section silently
+        # missing from every response is a signal worth seeing in the logs.
+        logger.warning("Could not generate %s: %s", label, exc)
         warnings.append(f"Could not generate {label}: {exc}")
         return None
 
