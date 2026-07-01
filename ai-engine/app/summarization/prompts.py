@@ -50,7 +50,7 @@ def glossary_prompt(source: str) -> str:
         "- Give each a one-sentence, plain-language definition grounded in how the "
         "source uses it.\n"
         "- Include at most 15 terms. If the source introduces no specialised terms, "
-        'return an empty list. Shape: {"glossary": [{"term", "definition"}]}.',
+        'return an empty list. Shape: {"glossary": [{"term": "...", "definition": "..."}]}.',
         source,
     )
 
@@ -62,6 +62,6 @@ def outline_prompt(source: str) -> str:
         "- Break it into 3 to 8 logical sections that follow the document's own "
         "order.\n"
         "- Give each section a short title and 2 to 5 key points drawn from the "
-        'source. Shape: {"outline": [{"title", "points": [...]}]}.',
+        'source. Shape: {"outline": [{"title": "...", "points": ["...", "..."]}]}.',
         source,
     )
