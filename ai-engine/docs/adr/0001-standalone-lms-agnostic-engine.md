@@ -23,7 +23,10 @@ JSON — so it can be integrated with any LMS later, and reused across Tekdi's
 other products rather than being locked to one.
 
 Inference is **local-first**: self-hosted open models via Ollama, with no
-external AI APIs in the default path.
+external AI APIs in the default path. (Amended for the development phase by
+[ADR-0002](0002-hosted-model-apis-for-development.md): development runs against
+hosted model APIs behind a provider-agnostic interface; self-hosting remains the
+production goal.)
 
 ## Consequences
 
