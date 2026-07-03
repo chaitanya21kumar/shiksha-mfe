@@ -86,13 +86,34 @@ def _page_heading_level(page: Page) -> int | None:
     return min(levels) if levels else None
 
 
-def _split_page(page: Page) -> list[_Section]:
-    """Split one page into narration sections at its most prominent heading level.
+def _whole_page_section(page: Page) -> _Section | None:
+    """Render an entire page as one narration section (used for slides).
 
-    A slide, or a page with no headings, becomes a single section; a page with
-    headings starts a new section at each heading of its top level. Speaker notes
-    are folded into the last section of the page.
+    The first heading becomes the title and is left out of the body; everything
+    else, plus any speaker notes, becomes the text. Returns None if the page
+    carries no title and no text.
     """
+    title: str | None = None
+    title_taken = False
+    parts: list[str] = []
+    for block in page.blocks:
+        if not title_taken and block.kind is BlockKind.heading:
+            title = (block.text or "").strip() or None
+            title_taken = True
+            continue
+        text = _block_text(block)
+        if text:
+            parts.append(text)
+    if page.notes and page.notes.strip():
+        parts.append(page.notes.strip())
+    text = "\n".join(parts).strip()
+    if not text and not title:
+        return None
+    return _Section(source_index=page.index, title=title, text=text)
+
+
+def _split_by_heading(page: Page) -> list[_Section]:
+    """Split a flowing page into sections at its most prominent heading level."""
     split_level = _page_heading_level(page)
     sections: list[_Section] = []
     title: str | None = None
@@ -117,6 +138,20 @@ def _split_page(page: Page) -> list[_Section]:
         parts.append(page.notes.strip())
     flush()
     return sections
+
+
+def _split_page(page: Page) -> list[_Section]:
+    """Split one page into narration sections.
+
+    A slide is always a single section — one script per slide — with its first
+    heading as the title, so a multi-heading slide is never split. A flowing page
+    (page / document / sheet) is split at its most prominent heading level,
+    falling back to a single section. Speaker notes are folded in either way.
+    """
+    if page.kind == "slide":
+        section = _whole_page_section(page)
+        return [section] if section else []
+    return _split_by_heading(page)
 
 
 def _build_sections(doc: ParsedDocument) -> list[_Section]:
@@ -196,6 +231,8 @@ async def generate_narration(
         raise EmptyDocumentError("The document contains no narratable text.")
 
     sections, warnings = _bounded(sections, _MAX_SECTIONS, config.max_source_chars)
+    if not sections:
+        raise EmptyDocumentError("The document has no narratable text within the size limit.")
     numbered = [(i, sec.title, sec.text) for i, sec in enumerate(sections, start=1)]
     scripts = await _generate(client, config, numbered, warnings)
 

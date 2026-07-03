@@ -99,6 +99,26 @@ def test_build_sections_skips_empty_pages():
     assert _build_sections(_doc(pages, fmt="pdf")) == []
 
 
+def test_build_sections_slide_with_multiple_headings_is_one_section():
+    # A slide with two same-level headings must stay a single segment (one script
+    # per slide), so source_index stays 1:1 with slides.
+    page = Page(
+        index=1,
+        kind="slide",
+        blocks=[
+            Block(kind=BlockKind.heading, text="Left", level=1),
+            Block(kind=BlockKind.paragraph, text="Left body."),
+            Block(kind=BlockKind.heading, text="Right", level=1),
+            Block(kind=BlockKind.paragraph, text="Right body."),
+        ],
+    )
+    sections = _build_sections(_doc([page]))
+    assert len(sections) == 1
+    assert sections[0].title == "Left"  # first heading becomes the title
+    assert "Left body." in sections[0].text
+    assert "Right" in sections[0].text and "Right body." in sections[0].text
+
+
 def test_generate_narration_builds_segments(monkeypatch):
     import app.narration.pipeline as pipeline
 
@@ -156,3 +176,19 @@ def test_generate_narration_raises_on_empty_document():
     empty = _doc([Page(index=1, kind="page", blocks=[])], fmt="pdf")
     with pytest.raises(EmptyDocumentError):
         asyncio.run(generate_narration(None, empty, _config()))
+
+
+def test_generate_narration_raises_when_size_limit_leaves_no_sections():
+    # A tiny max_source_chars empties the sections; fail fast with
+    # EmptyDocumentError rather than call the model with an empty prompt.
+    config = GenerationConfig(
+        base_url="https://gateway/v1",
+        api_key="k",
+        model="m",
+        provider="test",
+        temperature=0.0,
+        max_source_chars=0,
+    )
+    doc = _doc([Page(index=1, kind="page", blocks=[Block(kind=BlockKind.paragraph, text="Some text.")])], fmt="pdf")
+    with pytest.raises(EmptyDocumentError):
+        asyncio.run(generate_narration(None, doc, config))
