@@ -1,12 +1,14 @@
 """Unit tests for the narration pipeline's deterministic parts.
 
 Section-building and the duration maths are pure and are tested directly; the
-one model call is exercised with a stubbed ``chat_json`` so these stay offline.
+one model call is exercised through a mocked gateway so these stay offline.
 """
 
 import asyncio
+import json
 from datetime import datetime, timezone
 
+import httpx
 import pytest
 
 from app.ingestion.schema import Block, BlockKind, Page, ParsedDocument, SourceInfo
@@ -33,6 +35,21 @@ def _config() -> GenerationConfig:
         temperature=0.0,
         max_source_chars=24000,
     )
+
+
+def _reply(segments: list[dict]) -> httpx.Response:
+    """A chat-completions response carrying the given narration segments."""
+    content = json.dumps({"segments": segments})
+    return httpx.Response(200, json={"choices": [{"message": {"content": content}}]})
+
+
+def _run(doc: ParsedDocument, handler, config: GenerationConfig | None = None):
+    """Run generate_narration against a mocked gateway and return the result."""
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler), timeout=httpx.Timeout(5.0))
+    try:
+        return asyncio.run(generate_narration(client, doc, config or _config()))
+    finally:
+        asyncio.run(client.aclose())
 
 
 def test_build_sections_one_per_slide():
@@ -119,18 +136,13 @@ def test_build_sections_slide_with_multiple_headings_is_one_section():
     assert "Right" in sections[0].text and "Right body." in sections[0].text
 
 
-def test_generate_narration_builds_segments(monkeypatch):
-    import app.narration.pipeline as pipeline
+def test_generate_narration_builds_segments():
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return _reply([
+            {"index": 1, "script": "One two three four five."},
+            {"index": 2, "script": "Six seven eight."},
+        ])
 
-    async def fake_chat_json(_client, **_kwargs):
-        return {
-            "segments": [
-                {"index": 1, "script": "One two three four five."},
-                {"index": 2, "script": "Six seven eight."},
-            ]
-        }
-
-    monkeypatch.setattr(pipeline, "chat_json", fake_chat_json)
     pages = [
         Page(index=1, kind="slide", blocks=[
             Block(kind=BlockKind.heading, text="Intro", level=1),
@@ -141,7 +153,7 @@ def test_generate_narration_builds_segments(monkeypatch):
             Block(kind=BlockKind.paragraph, text="More content."),
         ]),
     ]
-    result = asyncio.run(generate_narration(None, _doc(pages), _config()))
+    result = _run(_doc(pages), handler)
     assert [s.index for s in result.segments] == [1, 2]
     assert [s.source_index for s in result.segments] == [1, 2]
     assert result.segments[0].word_count == 5
@@ -150,13 +162,10 @@ def test_generate_narration_builds_segments(monkeypatch):
     assert result.warnings == []
 
 
-def test_generate_narration_warns_on_missing_section(monkeypatch):
-    import app.narration.pipeline as pipeline
+def test_generate_narration_warns_on_missing_section():
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return _reply([{"index": 1, "script": "Only the first."}])
 
-    async def fake_chat_json(_client, **_kwargs):
-        return {"segments": [{"index": 1, "script": "Only the first."}]}
-
-    monkeypatch.setattr(pipeline, "chat_json", fake_chat_json)
     pages = [
         Page(index=1, kind="slide", blocks=[
             Block(kind=BlockKind.heading, text="A", level=1),
@@ -167,28 +176,26 @@ def test_generate_narration_warns_on_missing_section(monkeypatch):
             Block(kind=BlockKind.paragraph, text="Beta."),
         ]),
     ]
-    result = asyncio.run(generate_narration(None, _doc(pages), _config()))
+    result = _run(_doc(pages), handler)
     assert len(result.segments) == 1
     assert any("section 2" in w for w in result.warnings)
 
 
 def test_generate_narration_raises_on_empty_document():
     empty = _doc([Page(index=1, kind="page", blocks=[])], fmt="pdf")
+    run = generate_narration(None, empty, _config())
     with pytest.raises(EmptyDocumentError):
-        asyncio.run(generate_narration(None, empty, _config()))
+        asyncio.run(run)
 
 
 def test_generate_narration_raises_when_size_limit_leaves_no_sections():
     # A tiny max_source_chars empties the sections; fail fast with
     # EmptyDocumentError rather than call the model with an empty prompt.
     config = GenerationConfig(
-        base_url="https://gateway/v1",
-        api_key="k",
-        model="m",
-        provider="test",
-        temperature=0.0,
-        max_source_chars=0,
+        base_url="https://gateway/v1", api_key="k", model="m",
+        provider="test", temperature=0.0, max_source_chars=0,
     )
     doc = _doc([Page(index=1, kind="page", blocks=[Block(kind=BlockKind.paragraph, text="Some text.")])], fmt="pdf")
+    run = generate_narration(None, doc, config)
     with pytest.raises(EmptyDocumentError):
-        asyncio.run(generate_narration(None, doc, config))
+        asyncio.run(run)
