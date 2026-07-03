@@ -28,8 +28,11 @@ ingestion — PDF, PPTX, DOCX, CSV, TXT, Markdown and HTML into one structured
 JSON shape, exposed at `POST /ingest`) is built on top of it. **Module A.2**
 (summarisation) adds a layer over a parsed document, deriving a summary, key
 takeaways, a glossary, and a course outline via a configurable OpenAI-compatible
-model gateway, exposed at `POST /summarize` and `POST /summarize/file`. The later
-modules follow.
+model gateway, exposed at `POST /summarize` and `POST /summarize/file`. **Module
+A.3** (narration) turns the same parsed document into a spoken `NarrationScript`
+— one speakable segment per slide or section, each with a word count and duration
+estimate — exposed at `POST /narrate` and `POST /narrate/file`. The later modules
+follow.
 
 ## Requirements
 
@@ -57,6 +60,8 @@ Then:
 - `POST /ingest` — parse a document (PDF, PPTX, DOCX, CSV, TXT, Markdown, HTML) into structured JSON
 - `POST /summarize` — derive insights from an already-parsed document
 - `POST /summarize/file` — parse a document and derive insights in one call
+- `POST /narrate` — derive a spoken narration script from an already-parsed document
+- `POST /narrate/file` — parse a document and derive a narration script in one call
 - `GET /docs` — interactive API docs
 
 ## Test
