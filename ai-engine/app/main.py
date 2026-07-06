@@ -17,6 +17,7 @@ from fastapi.responses import JSONResponse
 
 from .config import settings
 from .ingestion.router import router as ingestion_router
+from .narration.router import router as narration_router
 from .summarization.llm_client import LLMTimeout, LLMUnavailable
 from .summarization.pipeline import EmptyDocumentError
 from .summarization.router import router as summarization_router
@@ -110,6 +111,7 @@ def create_app() -> FastAPI:
 
     app.include_router(ingestion_router)
     app.include_router(summarization_router)
+    app.include_router(narration_router)
     return app
 
 
