@@ -137,7 +137,7 @@ def test_generate_mcq_assigns_ids_and_grounds():
 
     result = _run(_lesson(), handler, types=("mcq",))
     assert result.counts == {"mcq": 1}
-    assert result.max_points == 1.0
+    assert result.max_points == pytest.approx(1.0)
     assert result.assessment_id and result.language == "en" and result.pass_percentage == 50
     q = result.questions[0]
     assert q.type == "mcq" and q.id == "q1" and q.source_index == 1

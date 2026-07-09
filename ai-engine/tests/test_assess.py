@@ -119,7 +119,7 @@ def test_assess_generates_every_type_by_default(use_model):
     assert resp.status_code == 200
     body = resp.json()
     assert body["counts"] == {"mcq": 1, "match": 1, "fill_blank": 1}
-    assert body["max_points"] == 3.0
+    assert body["max_points"] == pytest.approx(3.0)
     assert body["assessment_id"] and body["language"] == "en"
     assert body["model"]  # provenance from config
     assert body["warnings"] == []

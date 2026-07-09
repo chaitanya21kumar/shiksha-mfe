@@ -124,5 +124,5 @@ def test_duplicate_question_ids_rejected():
 def test_computed_max_points_and_counts():
     s = _set([_mcq(id="q1", points=2.0), _mcq(id="q2")])
     dumped = s.model_dump()
-    assert dumped["max_points"] == 3.0
+    assert dumped["max_points"] == pytest.approx(3.0)
     assert dumped["counts"] == {"mcq": 2}
