@@ -613,3 +613,38 @@ def test_fill_blank_dedupes_alternative_answers():
 
     q = _run(_lesson(), handler, types=("fill_blank",)).questions[0]
     assert q.blanks[0].answers == ["chloroplast"]  # case-insensitive duplicates collapsed
+
+
+# --------------------------------------------------------------------------- #
+# robustness to per-item model drift (found in live testing)
+# --------------------------------------------------------------------------- #
+def test_one_malformed_question_does_not_discard_the_batch():
+    def handler(_req):
+        return _reply(
+            [
+                {"source_section": 1, "evidence": _EVIDENCE, "prompt": "Good?", "options": [{"text": "Chloroplast", "is_correct": True}, {"text": "Nucleus", "is_correct": False}]},
+                {"source_section": 1, "evidence": _EVIDENCE, "prompt": "Bad?", "options": [{"text": 1, "is_correct": True}, {"text": 2}]},  # option texts as ints
+            ]
+        )
+
+    result = _run(_lesson(), handler, types=("mcq",), count=5)
+    assert [q.prompt for q in result.questions] == ["Good?"]  # the good one survives
+    assert any("Skipped a malformed mcq" in w for w in result.warnings)
+
+
+def test_match_with_object_distractors_is_kept():
+    def handler(_req):
+        return _reply(
+            [
+                {
+                    "source_section": 1,
+                    "evidence": _EVIDENCE,
+                    "prompt": "Match",
+                    "pairs": [{"left": "Plants", "right": "Food"}, {"left": "Light", "right": "Energy"}],
+                    "distractors": [{"left": "x", "right": "y"}, "Water"],  # a stray pair-object + a valid string
+                }
+            ]
+        )
+
+    q = _run(_lesson(), handler, types=("match",)).questions[0]
+    assert [t.text for t in q.targets] == ["Food", "Energy", "Water"]  # object dropped, "Water" kept

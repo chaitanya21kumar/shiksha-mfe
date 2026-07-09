@@ -32,7 +32,7 @@ from datetime import datetime, timezone
 from typing import Callable, Literal
 
 import httpx
-from pydantic import AliasChoices, BaseModel, Field, ValidationError
+from pydantic import AliasChoices, BaseModel, Field, ValidationError, field_validator
 
 from ..ingestion.schema import Block, BlockKind, Page, ParsedDocument
 from ..summarization.llm_client import LLMBadResponse, chat_json
@@ -245,11 +245,20 @@ class _QuestionOut(BaseModel):
         default_factory=list, validation_alias=AliasChoices("blanks", "gaps")
     )
 
-
-class _QuestionsResponse(BaseModel):
-    questions: list[_QuestionOut] = Field(
-        default_factory=list, validation_alias=AliasChoices("questions", "items")
-    )
+    @field_validator("distractors", mode="before")
+    @classmethod
+    def _clean_distractors(cls, value: object) -> list[str]:
+        # Distractors are optional decoration; keep only the string ones so a match
+        # question is not lost when the model returns pair-objects here by mistake.
+        if not isinstance(value, list):
+            return []
+        cleaned: list[str] = []
+        for item in value:
+            if isinstance(item, str):
+                cleaned.append(item)
+            elif isinstance(item, (int, float)) and not isinstance(item, bool):
+                cleaned.append(str(item))
+        return cleaned
 
 
 # --------------------------------------------------------------------------- #
@@ -408,8 +417,10 @@ async def _generate_type(
 ) -> list[_QuestionOut]:
     """Run one generation for a question type and return its validated items.
 
-    Connectivity and timeout errors propagate (the caller fails the request);
-    unusable output degrades to an empty list with a warning.
+    Each question is validated on its own, so one malformed item (an 8B model
+    occasionally drifts on a single item's shape) is skipped with a warning rather
+    than discarding the whole batch. Connectivity and timeout errors propagate (the
+    caller fails the request); an unusable response degrades to an empty list.
     """
     try:
         raw = await chat_json(
@@ -421,13 +432,25 @@ async def _generate_type(
             user=_SPECS[qtype].prompt(numbered, count),
             temperature=config.temperature,
         )
-        questions = _QuestionsResponse.model_validate(raw).questions
-    except (LLMBadResponse, ValidationError) as exc:
+    except LLMBadResponse as exc:
         logger.warning("Could not generate %s questions: %s", qtype, exc)
         warnings.append(f"Could not generate {qtype} questions: {exc}")
         return []
-    # Never assemble more than were asked for, however many the model returned.
-    return questions[:count]
+
+    raw_items = raw.get("questions")
+    if not isinstance(raw_items, list):
+        raw_items = raw.get("items")
+    if not isinstance(raw_items, list):
+        warnings.append(f"Could not generate {qtype} questions: the response had no question list.")
+        return []
+
+    parsed: list[_QuestionOut] = []
+    for item in raw_items[:count]:  # never assemble more than were asked for
+        try:
+            parsed.append(_QuestionOut.model_validate(item))
+        except ValidationError:
+            warnings.append(f"Skipped a malformed {qtype} question returned by the model.")
+    return parsed
 
 
 async def generate_assessment(
