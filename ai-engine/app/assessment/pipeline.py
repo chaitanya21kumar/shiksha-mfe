@@ -259,6 +259,22 @@ def _clean(value: str | None) -> str:
     return (value or "").strip()
 
 
+def _grounded_answers(raw_answers: list[str], answer_sources: list[str]) -> list[str]:
+    """The accepted answers that trace to the source, de-duplicated, in order.
+
+    An alternative the model invents but the source does not contain is dropped,
+    and case-insensitive duplicates are collapsed.
+    """
+    grounded: list[str] = []
+    seen: set[str] = set()
+    for answer in (_clean(a) for a in raw_answers):
+        norm = _normalise(answer)
+        if answer and norm not in seen and _contains(answer_sources, norm):
+            grounded.append(answer)
+            seen.add(norm)
+    return grounded
+
+
 def _assemble_mcq(
     out: _QuestionOut, qid: str, source_index: int | None, haystacks: list[str], warnings: list[str]
 ) -> MCQItem | None:
@@ -343,13 +359,7 @@ def _assemble_fill_blank(
     answer_sources = [_normalise(out.evidence), *haystacks]
     blanks: list[Blank] = []
     for i, blank in enumerate(out.blanks, start=1):
-        grounded: list[str] = []
-        seen: set[str] = set()
-        for answer in (_clean(a) for a in blank.answers):
-            norm = _normalise(answer)
-            if answer and norm not in seen and _contains(answer_sources, norm):
-                grounded.append(answer)
-                seen.add(norm)
+        grounded = _grounded_answers(blank.answers, answer_sources)
         if not grounded:
             warnings.append("Dropped a fill-in-the-blank whose answer was not found in the source.")
             return None

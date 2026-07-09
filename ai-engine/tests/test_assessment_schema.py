@@ -2,7 +2,8 @@
 
 These construct the typed models directly (rather than through the pipeline) so
 every validator branch is exercised, including the ones the pipeline never
-produces because it assembles valid input.
+produces because it assembles valid input. Each ``pytest.raises`` block wraps a
+single constructor call, with its inputs built beforehand.
 """
 
 from datetime import datetime, timezone
@@ -24,11 +25,11 @@ from app.assessment.schema import (
 
 
 def _mcq(**overrides) -> MCQItem:
-    kwargs = dict(
-        id="q1",
-        prompt="Q?",
-        choices=[Choice(id="q1-c1", text="a", is_correct=True), Choice(id="q1-c2", text="b")],
-    )
+    kwargs = {
+        "id": "q1",
+        "prompt": "Q?",
+        "choices": [Choice(id="q1-c1", text="a", is_correct=True), Choice(id="q1-c2", text="b")],
+    }
     kwargs.update(overrides)
     return MCQItem(**kwargs)
 
@@ -48,15 +49,21 @@ def _set(questions) -> AssessmentSet:
 # MCQ
 # --------------------------------------------------------------------------- #
 def test_mcq_duplicate_choice_ids_rejected():
+    choices = [Choice(id="c", text="a", is_correct=True), Choice(id="c", text="b")]
     with pytest.raises(ValidationError):
-        _mcq(choices=[Choice(id="c", text="a", is_correct=True), Choice(id="c", text="b")])
+        _mcq(choices=choices)
 
 
-def test_single_answer_requires_exactly_one_correct():
-    with pytest.raises(ValidationError):  # two correct
-        _mcq(choices=[Choice(id="c1", text="a", is_correct=True), Choice(id="c2", text="b", is_correct=True)])
-    with pytest.raises(ValidationError):  # zero correct
-        _mcq(choices=[Choice(id="c1", text="a"), Choice(id="c2", text="b")])
+def test_single_answer_with_two_correct_rejected():
+    choices = [Choice(id="c1", text="a", is_correct=True), Choice(id="c2", text="b", is_correct=True)]
+    with pytest.raises(ValidationError):
+        _mcq(choices=choices)
+
+
+def test_single_answer_with_zero_correct_rejected():
+    choices = [Choice(id="c1", text="a"), Choice(id="c2", text="b")]
+    with pytest.raises(ValidationError):
+        _mcq(choices=choices)
 
 
 def test_multi_answer_allows_more_than_one_correct():
@@ -68,65 +75,56 @@ def test_multi_answer_allows_more_than_one_correct():
 
 
 def test_mcq_duplicate_choice_texts_rejected():
+    choices = [Choice(id="c1", text="Paris", is_correct=True), Choice(id="c2", text="paris")]
     with pytest.raises(ValidationError):  # case-insensitive
-        _mcq(choices=[Choice(id="c1", text="Paris", is_correct=True), Choice(id="c2", text="paris")])
+        _mcq(choices=choices)
 
 
 # --------------------------------------------------------------------------- #
 # Match
 # --------------------------------------------------------------------------- #
 def test_match_unknown_target_id_rejected():
+    sources = [MatchSource(id="s1", text="a", target_id="missing"), MatchSource(id="s2", text="b", target_id="t1")]
+    targets = [MatchTarget(id="t1", text="x"), MatchTarget(id="t2", text="y")]
     with pytest.raises(ValidationError):
-        MatchItem(
-            id="q1",
-            prompt="Match",
-            sources=[MatchSource(id="s1", text="a", target_id="missing"), MatchSource(id="s2", text="b", target_id="t1")],
-            targets=[MatchTarget(id="t1", text="x"), MatchTarget(id="t2", text="y")],
-        )
+        MatchItem(id="q1", prompt="Match", sources=sources, targets=targets)
 
 
 def test_match_duplicate_target_ids_rejected():
+    sources = [MatchSource(id="s1", text="a", target_id="t1"), MatchSource(id="s2", text="b", target_id="t1")]
+    targets = [MatchTarget(id="t1", text="x"), MatchTarget(id="t1", text="y")]
     with pytest.raises(ValidationError):
-        MatchItem(
-            id="q1",
-            prompt="Match",
-            sources=[MatchSource(id="s1", text="a", target_id="t1"), MatchSource(id="s2", text="b", target_id="t1")],
-            targets=[MatchTarget(id="t1", text="x"), MatchTarget(id="t1", text="y")],
-        )
+        MatchItem(id="q1", prompt="Match", sources=sources, targets=targets)
 
 
 def test_match_duplicate_target_texts_rejected():
+    sources = [MatchSource(id="s1", text="a", target_id="t1"), MatchSource(id="s2", text="b", target_id="t2")]
+    targets = [MatchTarget(id="t1", text="Same"), MatchTarget(id="t2", text="same")]
     with pytest.raises(ValidationError):  # case-insensitive
-        MatchItem(
-            id="q1",
-            prompt="Match",
-            sources=[MatchSource(id="s1", text="a", target_id="t1"), MatchSource(id="s2", text="b", target_id="t2")],
-            targets=[MatchTarget(id="t1", text="Same"), MatchTarget(id="t2", text="same")],
-        )
+        MatchItem(id="q1", prompt="Match", sources=sources, targets=targets)
 
 
 def test_match_duplicate_source_texts_rejected():
+    sources = [MatchSource(id="s1", text="Dup", target_id="t1"), MatchSource(id="s2", text="dup", target_id="t2")]
+    targets = [MatchTarget(id="t1", text="x"), MatchTarget(id="t2", text="y")]
     with pytest.raises(ValidationError):  # case-insensitive
-        MatchItem(
-            id="q1",
-            prompt="Match",
-            sources=[MatchSource(id="s1", text="Dup", target_id="t1"), MatchSource(id="s2", text="dup", target_id="t2")],
-            targets=[MatchTarget(id="t1", text="x"), MatchTarget(id="t2", text="y")],
-        )
+        MatchItem(id="q1", prompt="Match", sources=sources, targets=targets)
 
 
 # --------------------------------------------------------------------------- #
 # Fill-in-the-blank
 # --------------------------------------------------------------------------- #
 def test_fill_blank_marker_count_must_match_blanks():
+    blanks = [Blank(id="b1", answers=["x"])]
     with pytest.raises(ValidationError):
-        FillBlankItem(id="q1", text="a [[1]] and [[2]]", blanks=[Blank(id="b1", answers=["x"])])
+        FillBlankItem(id="q1", text="a [[1]] and [[2]]", blanks=blanks)
 
 
 def test_fill_blank_duplicate_markers_rejected():
     # A blank marked twice must be rejected, even though a set would dedupe to {1}.
+    blanks = [Blank(id="b1", answers=["x"])]
     with pytest.raises(ValidationError):
-        FillBlankItem(id="q1", text="[[1]] and [[1]] again", blanks=[Blank(id="b1", answers=["x"])])
+        FillBlankItem(id="q1", text="[[1]] and [[1]] again", blanks=blanks)
 
 
 def test_fill_blank_two_blanks_in_order_ok():
@@ -142,8 +140,9 @@ def test_fill_blank_two_blanks_in_order_ok():
 # AssessmentSet envelope
 # --------------------------------------------------------------------------- #
 def test_duplicate_question_ids_rejected():
+    questions = [_mcq(id="q1"), _mcq(id="q1")]
     with pytest.raises(ValidationError):
-        _set([_mcq(id="q1"), _mcq(id="q1")])
+        _set(questions)
 
 
 def test_computed_max_points_and_counts():

@@ -330,14 +330,22 @@ def test_unusable_model_output_degrades_to_warning():
 
 
 def test_empty_document_raises():
+    def handler(_req):
+        return _reply([])
+
     empty = _doc([Page(index=1, kind="page", blocks=[Block(kind=BlockKind.image)])])
     with pytest.raises(EmptyDocumentError):
-        _run(empty, lambda _req: _reply([]))
+        _run(empty, handler)
 
 
 def test_size_limit_leaving_no_sections_raises():
+    def handler(_req):
+        return _reply([])
+
+    doc = _lesson()
+    config = _config(max_source_chars=0)
     with pytest.raises(EmptyDocumentError):
-        _run(_lesson(), lambda _req: _reply([]), config=_config(max_source_chars=0))
+        _run(doc, handler, config=config)
 
 
 def test_unreachable_gateway_propagates():
@@ -346,8 +354,9 @@ def test_unreachable_gateway_propagates():
     def handler(req):
         raise httpx.ConnectError("refused", request=req)
 
+    doc = _lesson()
     with pytest.raises(LLMUnavailable):
-        _run(_lesson(), handler, types=("mcq",))
+        _run(doc, handler, types=("mcq",))
 
 
 def test_partial_degradation_across_types():
