@@ -31,8 +31,17 @@ takeaways, a glossary, and a course outline via a configurable OpenAI-compatible
 model gateway, exposed at `POST /summarize` and `POST /summarize/file`. **Module
 A.3** (narration) turns the same parsed document into a spoken `NarrationScript`
 — one speakable segment per slide or section, each with a word count and duration
-estimate — exposed at `POST /narrate` and `POST /narrate/file`. The later modules
-follow.
+estimate — exposed at `POST /narrate` and `POST /narrate/file`.
+
+**Module B** (assessment) turns a parsed document into a source-grounded
+`AssessmentSet` — multiple-choice, match-the-pair, and fill-in-the-blank
+questions — exposed at `POST /assess` and `POST /assess/file`. Every question is
+verified against the source and dropped if it cannot be grounded, so nothing is
+hallucinated. The contract is neutral: it carries stable ids and structured
+answers so it can be packaged, in later PRs, as an H5P Question Set, a SCORM 1.2
+package, and xAPI statements without changing shape. See
+[`docs/adr/0003`](docs/adr/0003-neutral-assessment-contract-and-grounding.md).
+The later modules follow.
 
 ## Requirements
 
@@ -62,6 +71,8 @@ Then:
 - `POST /summarize/file` — parse a document and derive insights in one call
 - `POST /narrate` — derive a spoken narration script from an already-parsed document
 - `POST /narrate/file` — parse a document and derive a narration script in one call
+- `POST /assess` — generate a source-grounded assessment from an already-parsed document
+- `POST /assess/file` — parse a document and generate an assessment in one call
 - `GET /docs` — interactive API docs
 
 ## Test
