@@ -67,6 +67,11 @@ def test_multi_answer_allows_more_than_one_correct():
     assert sum(c.is_correct for c in q.choices) == 2
 
 
+def test_mcq_duplicate_choice_texts_rejected():
+    with pytest.raises(ValidationError):  # case-insensitive
+        _mcq(choices=[Choice(id="c1", text="Paris", is_correct=True), Choice(id="c2", text="paris")])
+
+
 # --------------------------------------------------------------------------- #
 # Match
 # --------------------------------------------------------------------------- #
@@ -87,6 +92,26 @@ def test_match_duplicate_target_ids_rejected():
             prompt="Match",
             sources=[MatchSource(id="s1", text="a", target_id="t1"), MatchSource(id="s2", text="b", target_id="t1")],
             targets=[MatchTarget(id="t1", text="x"), MatchTarget(id="t1", text="y")],
+        )
+
+
+def test_match_duplicate_target_texts_rejected():
+    with pytest.raises(ValidationError):  # case-insensitive
+        MatchItem(
+            id="q1",
+            prompt="Match",
+            sources=[MatchSource(id="s1", text="a", target_id="t1"), MatchSource(id="s2", text="b", target_id="t2")],
+            targets=[MatchTarget(id="t1", text="Same"), MatchTarget(id="t2", text="same")],
+        )
+
+
+def test_match_duplicate_source_texts_rejected():
+    with pytest.raises(ValidationError):  # case-insensitive
+        MatchItem(
+            id="q1",
+            prompt="Match",
+            sources=[MatchSource(id="s1", text="Dup", target_id="t1"), MatchSource(id="s2", text="dup", target_id="t2")],
+            targets=[MatchTarget(id="t1", text="x"), MatchTarget(id="t2", text="y")],
         )
 
 

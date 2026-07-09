@@ -285,7 +285,7 @@ def _assemble_mcq(
             has_latex=_has_latex(prompt, *(o.text for o in options)),
         )
     except ValidationError:
-        warnings.append("Dropped a multiple-choice question without exactly one correct option.")
+        warnings.append("Dropped a malformed multiple-choice question.")
         return None
 
 
@@ -307,9 +307,13 @@ def _assemble_match(
         tid = f"{qid}-t{i}"
         targets.append(MatchTarget(id=tid, text=right))
         sources.append(MatchSource(id=f"{qid}-s{i}", text=left, target_id=tid))
-    for j, distractor in enumerate((_clean(d) for d in out.distractors), start=1):
-        if distractor:
-            targets.append(MatchTarget(id=f"{qid}-t{len(pairs) + j}", text=distractor))
+    # Add distractors, skipping any that duplicate an existing target (a repeated
+    # option is redundant and would just be ambiguous to the learner).
+    seen_targets = {t.text.lower() for t in targets}
+    for distractor in (_clean(d) for d in out.distractors):
+        if distractor and distractor.lower() not in seen_targets:
+            targets.append(MatchTarget(id=f"{qid}-t{len(targets) + 1}", text=distractor))
+            seen_targets.add(distractor.lower())
     try:
         return MatchItem(
             id=qid,
@@ -339,8 +343,13 @@ def _assemble_fill_blank(
     answer_sources = [_normalise(out.evidence), *haystacks]
     blanks: list[Blank] = []
     for i, blank in enumerate(out.blanks, start=1):
-        answers = [a for a in (_clean(a) for a in blank.answers) if a]
-        grounded = [a for a in answers if _contains(answer_sources, _normalise(a))]
+        grounded: list[str] = []
+        seen: set[str] = set()
+        for answer in (_clean(a) for a in blank.answers):
+            norm = _normalise(answer)
+            if answer and norm not in seen and _contains(answer_sources, norm):
+                grounded.append(answer)
+                seen.add(norm)
         if not grounded:
             warnings.append("Dropped a fill-in-the-blank whose answer was not found in the source.")
             return None

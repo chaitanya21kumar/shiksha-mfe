@@ -108,6 +108,9 @@ class MCQItem(_QuestionBase):
         ids = [c.id for c in self.choices]
         if len(set(ids)) != len(ids):
             raise ValueError("choice ids must be unique")
+        texts = [c.text.strip().lower() for c in self.choices]
+        if len(set(texts)) != len(texts):
+            raise ValueError("choice texts must be unique")
         correct = sum(1 for c in self.choices if c.is_correct)
         if self.single_answer and correct != 1:
             raise ValueError("a single-answer question must have exactly one correct choice")
@@ -139,6 +142,12 @@ class MatchItem(_QuestionBase):
         for s in self.sources:
             if s.target_id not in known:
                 raise ValueError(f"source {s.id!r} points at unknown target {s.target_id!r}")
+        target_texts = [t.text.strip().lower() for t in self.targets]
+        if len(set(target_texts)) != len(target_texts):
+            raise ValueError("target texts must be unique")
+        source_texts = [s.text.strip().lower() for s in self.sources]
+        if len(set(source_texts)) != len(source_texts):
+            raise ValueError("source texts must be unique")
         return self
 
 

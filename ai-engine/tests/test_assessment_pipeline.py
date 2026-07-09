@@ -260,7 +260,7 @@ def test_mcq_with_multiple_correct_is_dropped():
 
     result = _run(_lesson(), handler, types=("mcq",))
     assert result.questions == []
-    assert any("exactly one correct" in w for w in result.warnings)
+    assert any("malformed multiple-choice" in w for w in result.warnings)
 
 
 def test_fill_blank_answer_not_in_evidence_is_dropped():
@@ -567,3 +567,40 @@ def test_fill_blank_tip_passes_through():
 
     q = _run(_lesson(), handler, types=("fill_blank",)).questions[0]
     assert q.blanks[0].tip == "an organelle"
+
+
+# --------------------------------------------------------------------------- #
+# dedup / uniqueness (adopted from review)
+# --------------------------------------------------------------------------- #
+def test_mcq_duplicate_option_text_is_dropped():
+    def handler(_req):
+        return _reply([{"source_section": 1, "evidence": _EVIDENCE, "prompt": "Q?", "options": [{"text": "Chloroplast", "is_correct": True}, {"text": "chloroplast", "is_correct": False}]}])
+
+    result = _run(_lesson(), handler, types=("mcq",))
+    assert result.questions == [] and any("malformed multiple-choice" in w for w in result.warnings)
+
+
+def test_match_distractor_duplicating_a_target_is_skipped():
+    def handler(_req):
+        return _reply(
+            [
+                {
+                    "source_section": 1,
+                    "evidence": _EVIDENCE,
+                    "prompt": "Match",
+                    "pairs": [{"left": "Plants", "right": "Food"}, {"left": "Light", "right": "Energy"}],
+                    "distractors": ["Food", "Water"],  # "Food" already a correct target
+                }
+            ]
+        )
+
+    q = _run(_lesson(), handler, types=("match",)).questions[0]
+    assert [t.text for t in q.targets] == ["Food", "Energy", "Water"]  # duplicate "Food" skipped
+
+
+def test_fill_blank_dedupes_alternative_answers():
+    def handler(_req):
+        return _reply([{"source_section": 1, "evidence": _EVIDENCE, "text": "Plants make food from light in the [[1]].", "blanks": [{"answers": ["chloroplast", "Chloroplast", "chloroplast"]}]}])
+
+    q = _run(_lesson(), handler, types=("fill_blank",)).questions[0]
+    assert q.blanks[0].answers == ["chloroplast"]  # case-insensitive duplicates collapsed
