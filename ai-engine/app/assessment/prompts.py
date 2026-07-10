@@ -69,12 +69,15 @@ def match_prompt(numbered: list[tuple[int, str | None, str]], count: int) -> str
     """Ask for match-the-pair questions grounded in the source."""
     return _wrap(
         f"Write up to {count} match-the-pair questions from the source.\n"
-        "- Each question gives 3 to 5 left-hand items and their correct right-hand "
-        "matches, all drawn from the source.\n"
+        "- Each question gives 3 to 5 left-hand items (such as terms) and their "
+        "correct right-hand matches (such as short definitions), all drawn from the "
+        "source.\n"
+        "- Keep every right-hand match SHORT and DISTINCT — a few words, not a whole "
+        "sentence — and make sure no two left items share the same right-hand match.\n"
         "- Every left item must match exactly one right item.\n"
         'Shape: {"questions": [{"source_section": <int>, "evidence": "<exact quote '
         'from that section>", "prompt": "<the matching instruction>", "pairs": '
-        '[{"left": "<prompt term>", "right": "<its correct match>"}], "distractors": '
+        '[{"left": "<term>", "right": "<its short, unique match>"}], "distractors": '
         '["<optional extra unmatched right-hand item>"], "explanation": "<grounded '
         'rationale>"}]}',
         numbered,
