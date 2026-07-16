@@ -15,6 +15,7 @@ import httpx
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
+from .assessment.router import router as assessment_router
 from .config import settings
 from .ingestion.router import router as ingestion_router
 from .narration.router import router as narration_router
@@ -112,6 +113,7 @@ def create_app() -> FastAPI:
     app.include_router(ingestion_router)
     app.include_router(summarization_router)
     app.include_router(narration_router)
+    app.include_router(assessment_router)
     return app
 
 
