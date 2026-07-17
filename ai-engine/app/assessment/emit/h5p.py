@@ -107,7 +107,13 @@ def _safe_outside_markup(text: str) -> bool:
 
 
 def _safe_blank_answer(text: str) -> bool:
-    """Inside `*...*` for H5P.Blanks: `*` re-pairs, `:` starts a tip, `/` splits."""
+    """Inside `*...*` for H5P.Blanks: `*` re-pairs, `:` starts a tip, `/` splits.
+
+    Empty is rejected too: `**` is a well-formed token to H5P's tokenizer, so an
+    empty answer becomes a real gap that nothing can ever satisfy.
+    """
+    if not text.strip():
+        return False
     return not any(char in text for char in "*:/")
 
 
@@ -116,8 +122,19 @@ def _safe_blank_tip(text: str) -> bool:
     return "*" not in text
 
 
+def _safe_drag_line(text: str) -> bool:
+    """A source label sits between the gaps, and a newline now separates pairs."""
+    return "*" not in text and "\n" not in text
+
+
 def _safe_drag_target(text: str) -> bool:
-    """Inside `*...*` for H5P.DragText: `*` and `:` bite; `\\+`/`\\-` are feedback."""
+    """Inside `*...*` for H5P.DragText: `*` and `:` bite; `\\+`/`\\-` are feedback.
+
+    A newline would split the pair onto two lines, and an empty target produces
+    `**` — which Drag Text lexes into a real draggable carrying no text at all.
+    """
+    if not text.strip() or "\n" in text:
+        return False
     if any(char in text for char in "*:"):
         return False
     return "\\+" not in text and "\\-" not in text
@@ -210,6 +227,15 @@ def _mcq_params(item: MCQItem) -> dict[str, object]:
             for choice in item.choices
         ],
         "overallFeedback": _explanation_feedback(item.explanation),
+        # multichoice.js reads these three but does not carry them in its own
+        # defaults -- they exist only as semantics defaults, which the H5P editor
+        # applies and a machine-written content.json never sees. Omitting them
+        # renders the literal string "undefined" to the learner.
+        "UI": {
+            "tipsLabel": "Show tip",
+            "correctAnswer": "Correct answer",
+            "wrongAnswer": "Wrong answer",
+        },
         "behaviour": {
             # `type`, never `singleAnswer` (absent from semantics; multichoice.js
             # derives it from `type` before any read). Never "auto" either: with
@@ -291,16 +317,25 @@ def _blanks_params(item: FillBlankItem, text: str) -> dict[str, object]:
 
 
 def _dragtext_fields(item: MatchItem) -> tuple[str, str] | None:
-    """Build (textField, distractors), or None if any text would corrupt the markup."""
+    """Build (textField, distractors), or None if any text would corrupt the markup.
+
+    Pairs are separated by a newline, **not** by ``<br/>``. Drag Text's
+    ``textField`` is declared ``widget: textarea`` with no ``tags``, so H5P's
+    importer runs it through ``htmlspecialchars`` and a ``<br/>`` would reach the
+    learner as those literal five characters. Drag Text does its own
+    ``replace(/(\\r\\n|\\n|\\r)/gm, "<br/>")`` after the importer has run, so a
+    newline is the separator the field is designed for — and it is what H5P's own
+    semantics placeholder uses.
+    """
     targets_by_id = {target.id: target for target in item.targets}
     lines: list[str] = []
     for source in item.sources:
         target = targets_by_id.get(source.target_id)
         if target is None:  # the contract forbids this, but never render a guess
             return None
-        if not _safe_outside_markup(source.text) or not _safe_drag_target(target.text):
+        if not _safe_drag_line(source.text) or not _safe_drag_target(target.text):
             return None
-        lines.append(f"{_escape(source.text)} — *{_escape(target.text)}*")
+        lines.append(f"{_escape(source.text.strip())} — *{_escape(target.text.strip())}*")
 
     matched = {source.target_id for source in item.sources}
     distractors: list[str] = []
@@ -309,9 +344,9 @@ def _dragtext_fields(item: MatchItem) -> tuple[str, str] | None:
             continue
         if not _safe_drag_target(target.text):
             return None
-        distractors.append(f"*{_escape(target.text)}*")
+        distractors.append(f"*{_escape(target.text.strip())}*")
 
-    return "<br/>".join(lines), " ".join(distractors)
+    return "\n".join(lines), " ".join(distractors)
 
 
 def _dragtext_params(item: MatchItem, text_field: str, distractors: str) -> dict[str, object]:
@@ -418,7 +453,6 @@ def _question_set(assessment: AssessmentSet, questions: list[dict[str, object]])
             "title": _escape(title),
             "introduction": "<p>Answer all questions.</p>\n",
             "startButtonText": "Start Quiz",
-            "backgroundImageAltText": "",
         },
         "progressType": "dots",
         "passPercentage": assessment.pass_percentage,

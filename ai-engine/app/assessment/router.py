@@ -173,6 +173,12 @@ async def assess_h5p(assessment: AssessmentSet) -> Response:
             "description": "An H5P Question Set built from the uploaded document",
         },
         **_ERROR_RESPONSES,
+        # This route both generates and packages, so its 400 has two causes; the
+        # inherited description only covers the generating one.
+        400: {
+            "description": "The document has no text to build questions from, "
+            "or no question could be packaged"
+        },
         413: {"description": "File too large"},
         415: {"description": "Unsupported file type"},
     },

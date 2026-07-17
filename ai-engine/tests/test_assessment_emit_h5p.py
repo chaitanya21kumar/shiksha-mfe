@@ -117,7 +117,11 @@ def _h5p_parse_blanks(question_html: str) -> list[tuple[list[str], str | None]]:
     """
     parsed: list[tuple[list[str], str | None]] = []
     for token in _TOKENIZER.split(question_html):
-        if not (token.startswith("*") and token.endswith("*") and len(token) > 2):
+        # Faithful to H5P: DragText's isAnswerPart is startsWith("*") &&
+        # endsWith("*"), with no length floor, so "**" IS a token and lexes to an
+        # empty answer. A `len(token) > 2` guard here would hide exactly the bug
+        # this parser exists to catch.
+        if not (token.startswith("*") and token.endswith("*") and len(token) >= 2):
             continue
         inner = token[1:-1]
         tip_start = inner.find(":")
@@ -138,7 +142,11 @@ def _h5p_parse_dragtext(text_field: str) -> list[str]:
     """
     droppables: list[str] = []
     for token in _TOKENIZER.split(text_field):
-        if not (token.startswith("*") and token.endswith("*") and len(token) > 2):
+        # Faithful to H5P: DragText's isAnswerPart is startsWith("*") &&
+        # endsWith("*"), with no length floor, so "**" IS a token and lexes to an
+        # empty answer. A `len(token) > 2` guard here would hide exactly the bug
+        # this parser exists to catch.
+        if not (token.startswith("*") and token.endswith("*") and len(token) >= 2):
             continue
         inner = token[1:-1]
         inner = re.sub(r":([^\\*]+)", "", inner)
@@ -186,10 +194,13 @@ def test_dragtext_distractors_round_trip_and_exclude_matched_targets():
     assert _h5p_parse_dragtext(params["distractors"]) == ["melts rock"]
 
 
-def test_each_match_source_becomes_its_own_line():
+def test_each_match_pair_is_separated_by_a_newline_not_by_markup():
+    # textField is declared widget:textarea with no tags, so H5P's importer runs
+    # it through htmlspecialchars -- a <br/> would reach the learner as those five
+    # literal characters. DragText converts newlines to <br/> itself, afterwards.
     params = _params(_set([_match()]))
-    assert params["textField"].count("<br/>") == 1
-    assert params["textField"].startswith("Sun — *heats water*")
+    assert params["textField"] == "Sun — *heats water*\nCloud — *holds droplets*"
+    assert "<" not in params["textField"]
 
 
 # --- escaping / injection ----------------------------------------------------
@@ -295,6 +306,64 @@ def test_a_match_term_h5ps_markup_cannot_express_is_dropped_with_a_warning(term)
     )
     package = emit_h5p(_set([bad, _mcq(id="q2")]))
     assert any("q1" in warning for warning in package.warnings)
+
+
+@pytest.mark.parametrize("answer", ["", "   "])
+def test_an_empty_blank_answer_is_dropped_rather_than_emitted_as_a_hollow_gap(answer):
+    # "**" is a well-formed token to H5P's tokenizer, so an empty answer becomes a
+    # real gap that no learner input can ever satisfy -- silently, and worth a
+    # point that can never be scored.
+    bad = _blank(id="q1", blanks=[Blank(id="q1-b1", answers=[answer])])
+    package = emit_h5p(_set([bad, _mcq(id="q2")]))
+    assert any("q1" in warning for warning in package.warnings)
+    content = json.loads(zipfile.ZipFile(io.BytesIO(package.content)).read("content/content.json"))
+    assert [q["library"] for q in content["questions"]] == ["H5P.MultiChoice 1.16"]
+
+
+def test_an_empty_match_target_is_dropped_rather_than_emitted_as_a_blank_draggable():
+    bad = _match(
+        id="q1",
+        targets=[MatchTarget(id="q1-t1", text="  "), MatchTarget(id="q1-t2", text="ok")],
+    )
+    package = emit_h5p(_set([bad, _mcq(id="q2")]))
+    assert any("q1" in warning for warning in package.warnings)
+
+
+def test_no_emitted_gap_is_ever_empty():
+    # The general form of the two tests above: whatever we emit, "**" must never
+    # appear in it -- real H5P lexes that into an answer part carrying no text.
+    assessment = _set([_mcq(id="q1"), _blank(id="q2"), _match(id="q3")])
+    rendered = json.dumps(_content(assessment))
+    assert "**" not in rendered
+
+
+def test_a_newline_in_a_match_term_is_dropped_because_newlines_separate_pairs():
+    bad = _match(
+        id="q1",
+        sources=[
+            MatchSource(id="q1-s1", text="Sun\nrays", target_id="q1-t1"),
+            MatchSource(id="q1-s2", text="Cloud", target_id="q1-t2"),
+        ],
+    )
+    package = emit_h5p(_set([bad, _mcq(id="q2")]))
+    assert any("q1" in warning for warning in package.warnings)
+
+
+def test_the_multichoice_ui_labels_h5p_does_not_default_are_emitted():
+    # multichoice.js reads UI.tipsLabel / UI.correctAnswer / UI.wrongAnswer but
+    # carries no default for them -- they exist only as semantics defaults, which
+    # the editor applies and a machine-written content.json never sees. Omitting
+    # them renders the literal string "undefined" to the learner.
+    ui = _params(_set([_mcq()]))["UI"]
+    assert ui["tipsLabel"] and ui["correctAnswer"] and ui["wrongAnswer"]
+    assert "undefined" not in json.dumps(ui)
+
+
+def test_the_intro_page_carries_only_fields_question_set_declares():
+    # validateGroup silently unsets any key with no matching semantics field, so
+    # a stray key is dead weight that looks meaningful in review.
+    intro = _content(_set([_mcq()]))["introPage"]
+    assert set(intro) <= {"showIntroPage", "title", "introduction", "startButtonText", "backgroundImage"}
 
 
 def test_dropping_every_question_is_an_error_not_an_empty_package():
