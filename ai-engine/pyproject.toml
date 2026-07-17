@@ -28,6 +28,12 @@ build-backend = "setuptools.build_meta"
 [tool.setuptools.packages.find]
 include = ["app*"]
 
+# A SCORM package carries its own player, so these are shipped inside the wheel
+# and read at emit time. Without this they are silently absent from a build and
+# every generated package would be missing its JavaScript.
+[tool.setuptools.package-data]
+"app.packaging.scorm.assets" = ["*.html", "*.js", "*.css"]
+
 [tool.pytest.ini_options]
 pythonpath = ["."]
 testpaths = ["tests"]
