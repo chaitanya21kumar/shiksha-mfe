@@ -41,7 +41,23 @@ hallucinated. The contract is neutral: it carries stable ids and structured
 answers so it can be packaged, in later PRs, as an H5P Question Set, a SCORM 1.2
 package, and xAPI statements without changing shape. See
 [`docs/adr/0003`](docs/adr/0003-neutral-assessment-contract-and-grounding.md).
-The later modules follow.
+
+**Module B packaging** turns that `AssessmentSet` into an **H5P Question Set**
+(`.h5p`) at `POST /assess/h5p` and `POST /assess/h5p/file`. Multiple-choice maps
+to `H5P.MultiChoice`, fill-in-the-blank to `H5P.Blanks`, and match-the-pair to
+`H5P.DragText` (H5P has no first-class matching type; Drag Text's gaps and
+distractors express one cleanly). The rubric — per-question points, a mastery
+threshold, and score bands — rides along, and LaTeX renders through H5P's
+MathDisplay. The emitter is pure Python and writes the ZIP directly; see
+[`docs/adr/0004`](docs/adr/0004-pure-python-h5p-packaging.md). The later modules
+follow.
+
+> **Prerequisite for import:** the target LMS must have the H5P content types
+> installed (in Moodle: *Site administration → H5P → Manage H5P content types*),
+> and MathDisplay enabled if your questions use LaTeX. The package declares its
+> dependencies rather than bundling several MB of libraries into every file; the
+> versions it targets are pinned in
+> [`app/packaging/h5p/versions.py`](app/packaging/h5p/versions.py).
 
 ## Requirements
 
@@ -73,6 +89,8 @@ Then:
 - `POST /narrate/file` — parse a document and derive a narration script in one call
 - `POST /assess` — generate a source-grounded assessment from an already-parsed document
 - `POST /assess/file` — parse a document and generate an assessment in one call
+- `POST /assess/h5p` — package an assessment as an H5P Question Set (`.h5p`)
+- `POST /assess/h5p/file` — parse, generate and package in one call
 - `GET /docs` — interactive API docs
 
 ## Test
