@@ -36,7 +36,10 @@ from app.packaging.h5p import (
 # Verbatim from H5P's $h5pRequired.
 H5P_LANGUAGE_RE = re.compile(r"^[-a-zA-Z]{1,10}$")
 H5P_MAIN_LIBRARY_RE = re.compile(r"^[$a-z_][0-9a-z_.$]{1,254}$", re.IGNORECASE)
-H5P_VERSION_RE = re.compile(r"^[0-9]{1,5}$")
+# H5P's own pattern is /^[0-9]{1,5}$/. `re.ASCII` is what keeps `\d` to that same
+# set: without it Python's `\d` also matches Devanagari and Arabic-Indic digits,
+# which PHP would reject -- not a hypothetical for a multi-tenant Indian LMS.
+H5P_VERSION_RE = re.compile(r"^\d{1,5}$", re.ASCII)
 H5P_TITLE_RE = re.compile(r"^.{1,255}$", re.DOTALL)
 # Verbatim from $h5pOptional['license'].
 H5P_LICENSE_RE = re.compile(

@@ -101,7 +101,12 @@ def _params(assessment: AssessmentSet, index: int = 0) -> dict:
 
 # --- H5P's real parsers, re-implemented ---------------------------------------
 
-_TOKENIZER = re.compile(r"(\*.*?\*)")
+# H5P tokenizes with `text.split(/(\*.*?\*)/)`. This is the same expression without
+# the reluctant quantifier: JavaScript's `.` excludes line terminators, so excluding
+# `\n` from the class keeps it byte-for-byte equivalent (checked across the cases in
+# the round-trip tests below). Note `[^*]*` alone would NOT be equivalent -- it would
+# match across a newline, where H5P's would not.
+_TOKENIZER = re.compile(r"(\*[^*\n]*\*)")
 
 
 def _h5p_parse_blanks(question_html: str) -> list[tuple[list[str], str | None]]:
@@ -392,13 +397,15 @@ def test_dropping_every_question_is_an_error_not_an_empty_package():
     # A Question Set requires at least one question, so there is no valid empty
     # package to hand back -- this must surface as a 400, not a corrupt download.
     bad = _blank(blanks=[Blank(id="q1-b1", answers=["m/s"])])
+    assessment = _set([bad])
     with pytest.raises(EmptyAssessmentError):
-        emit_h5p(_set([bad]))
+        emit_h5p(assessment)
 
 
 def test_an_assessment_with_no_questions_is_an_error():
+    assessment = _set([])
     with pytest.raises(EmptyAssessmentError):
-        emit_h5p(_set([]))
+        emit_h5p(assessment)
 
 
 # --- the MultiChoice traps ---------------------------------------------------
@@ -555,8 +562,9 @@ def test_multi_line_latex_is_dropped_because_mathdisplay_would_never_attach():
     # MathDisplay's trigger regex has no DOTALL flag, so a span containing a
     # newline never matches and the learner is shown raw LaTeX.
     item = _mcq(prompt="Solve \\[\n x = 1 \n\\] now.", has_latex=True)
+    assessment = _set([item])
     with pytest.raises(EmptyAssessmentError):
-        emit_h5p(_set([item]))
+        emit_h5p(assessment)
 
 
 def test_multi_line_latex_in_a_choice_is_caught_not_just_in_the_stem():
@@ -569,8 +577,9 @@ def test_multi_line_latex_in_a_choice_is_caught_not_just_in_the_stem():
             Choice(id="q1-c2", text="two"),
         ],
     )
+    assessment = _set([item])
     with pytest.raises(EmptyAssessmentError):
-        emit_h5p(_set([item]))
+        emit_h5p(assessment)
 
 
 def test_latex_inside_a_blank_answer_is_dropped_because_the_answer_is_a_text_box():
