@@ -195,6 +195,43 @@ class AssessmentSource(BaseModel):
     page_count: int = Field(description="Pages, slides or sheets in the source.")
 
 
+class ScoreBand(BaseModel):
+    """One rubric band: a score range, as a percentage, and what to tell the learner.
+
+    ``from``/``to`` are Python keywords, hence the ``_percent`` suffixes; the H5P
+    emitter renames them when it writes ``endGame.overallFeedback``.
+    """
+
+    from_percent: int = Field(ge=0, le=100, description="Lower bound, inclusive.")
+    to_percent: int = Field(ge=0, le=100, description="Upper bound, inclusive.")
+    feedback: str
+
+    @model_validator(mode="after")
+    def _check_range(self) -> ScoreBand:
+        if self.from_percent > self.to_percent:
+            raise ValueError("a band cannot end before it starts")
+        return self
+
+
+def default_score_bands(pass_percentage: int) -> list[ScoreBand]:
+    """The rubric we use when a caller supplies none: pass/fail around the threshold.
+
+    Deterministic in Python rather than generated: band text is not drawn from the
+    source document, so it is not something the grounding gate could ever verify.
+    """
+    if pass_percentage == 0:
+        # Everything passes, so a "keep practising" band would span [0, -1].
+        return [ScoreBand(from_percent=0, to_percent=100, feedback="Assessment complete.")]
+    return [
+        ScoreBand(
+            from_percent=0,
+            to_percent=pass_percentage - 1,
+            feedback="Keep practising — review the material and try again.",
+        ),
+        ScoreBand(from_percent=pass_percentage, to_percent=100, feedback="Passed — well done."),
+    ]
+
+
 class AssessmentSet(BaseModel):
     """Everything Module B derives from one parsed document."""
 
@@ -216,6 +253,13 @@ class AssessmentSet(BaseModel):
         le=100,
         description="Mastery threshold (SCORM masteryscore, H5P passPercentage, xAPI result.success).",
     )
+    score_bands: list[ScoreBand] = Field(
+        default_factory=list,
+        description=(
+            "The rubric: score bands over the achieved percentage. Must tile 0-100 with no "
+            "gaps or overlaps. Empty means the emitters derive a default from pass_percentage."
+        ),
+    )
     questions: list[Question] = Field(default_factory=list)
     warnings: list[str] = Field(
         default_factory=list,
@@ -227,6 +271,24 @@ class AssessmentSet(BaseModel):
         ids = [q.id for q in self.questions]
         if len(set(ids)) != len(ids):
             raise ValueError("question ids must be unique within the set")
+        return self
+
+    @model_validator(mode="after")
+    def _check_score_bands(self) -> AssessmentSet:
+        """Bands must tile 0-100 exactly.
+
+        A gap is not a harmless omission: H5P picks the band containing the score and
+        silently shows nothing when none matches, so a hole here is invisible until a
+        learner lands in it. Reject it at the contract instead.
+        """
+        if not self.score_bands:
+            return self
+        ordered = sorted(self.score_bands, key=lambda b: b.from_percent)
+        if ordered[0].from_percent != 0 or ordered[-1].to_percent != 100:
+            raise ValueError("score bands must cover 0 to 100")
+        for previous, current in zip(ordered, ordered[1:]):
+            if current.from_percent != previous.to_percent + 1:
+                raise ValueError("score bands must be contiguous and must not overlap")
         return self
 
     @computed_field  # type: ignore[prop-decorator]
