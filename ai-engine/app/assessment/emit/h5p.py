@@ -73,6 +73,19 @@ class H5PPackage(NamedTuple):
     warnings: list[str]
 
 
+class _Unrenderable(Exception):
+    """A question H5P cannot express faithfully, and why.
+
+    Carrying the reason out of the builder keeps each warning honest: the causes
+    are genuinely different (unusable markup, a dangling reference, maths in a
+    text box) and a caller reading `warnings` should be told which one it hit.
+    """
+
+    def __init__(self, reason: str) -> None:
+        super().__init__(reason)
+        self.reason = reason
+
+
 def _escape(text: str) -> str:
     """Escape model text for an H5P field. Quotes are left alone: these are text
     nodes, not attribute values, and escaping them only hurts readability."""
@@ -260,10 +273,16 @@ def _mcq_params(item: MCQItem) -> dict[str, object]:
     }
 
 
-def _blanks_text(item: FillBlankItem) -> str | None:
-    """Render `[[n]]` markers into H5P's `*answer/alt:tip*` markup, or None if unsafe."""
+_MARKUP_REASON = (
+    "an answer or tip contains a character (* : /) that H5P's fill-in-the-blank "
+    "markup cannot express"
+)
+
+
+def _blanks_text(item: FillBlankItem) -> str:
+    """Render `[[n]]` markers into H5P's `*answer/alt:tip*` markup."""
     if not _safe_outside_markup(item.text):
-        return None
+        raise _Unrenderable(_MARKUP_REASON)
 
     replacements: dict[int, str] = {}
     for position, blank in enumerate(item.blanks, start=1):
@@ -272,16 +291,19 @@ def _blanks_text(item: FillBlankItem) -> str | None:
         # before or after is equivalent, and the author's own text is what the
         # warning will talk about.
         if not all(_safe_blank_answer(answer) for answer in answers):
-            return None
+            raise _Unrenderable(_MARKUP_REASON)
         # Escaped, like every other field: these land inside the question's HTML.
         # It round-trips — parseSolution entity-decodes each solution before
         # grading, and a tip is rendered through jQuery's .html(), which parses
         # the entity back.
         markup = "/".join(_escape(answer) for answer in answers)
-        if blank.tip:
-            tip = blank.tip.strip()
+        tip = (blank.tip or "").strip()
+        if tip:
+            # Only append a tip that survives stripping: a whitespace-only tip
+            # would emit a bare trailing colon, which parseSolution reads as a
+            # real (empty) tip.
             if not _safe_blank_tip(tip):
-                return None
+                raise _Unrenderable(_MARKUP_REASON)
             markup = f"{markup}:{_escape(tip)}"
         replacements[position] = f"*{markup}*"
 
@@ -316,8 +338,8 @@ def _blanks_params(item: FillBlankItem, text: str) -> dict[str, object]:
     }
 
 
-def _dragtext_fields(item: MatchItem) -> tuple[str, str] | None:
-    """Build (textField, distractors), or None if any text would corrupt the markup.
+def _dragtext_fields(item: MatchItem) -> tuple[str, str]:
+    """Build (textField, distractors) for a match question.
 
     Pairs are separated by a newline, **not** by ``<br/>``. Drag Text's
     ``textField`` is declared ``widget: textarea`` with no ``tags``, so H5P's
@@ -327,14 +349,19 @@ def _dragtext_fields(item: MatchItem) -> tuple[str, str] | None:
     newline is the separator the field is designed for — and it is what H5P's own
     semantics placeholder uses.
     """
+    drag_reason = "a term contains a character (* or :) that H5P's drag-text markup cannot express"
     targets_by_id = {target.id: target for target in item.targets}
     lines: list[str] = []
     for source in item.sources:
         target = targets_by_id.get(source.target_id)
-        if target is None:  # the contract forbids this, but never render a guess
-            return None
+        if target is None:
+            # The contract's own validator rejects a dangling target_id, so this
+            # is unreachable in practice. It is still worth its own reason: a
+            # broken reference is not a markup problem, and saying so would send
+            # whoever reads the warning looking in the wrong place.
+            raise _Unrenderable(f"{source.id} points at a target that does not exist")
         if not _safe_drag_line(source.text) or not _safe_drag_target(target.text):
-            return None
+            raise _Unrenderable(drag_reason)
         lines.append(f"{_escape(source.text.strip())} — *{_escape(target.text.strip())}*")
 
     matched = {source.target_id for source in item.sources}
@@ -343,7 +370,7 @@ def _dragtext_fields(item: MatchItem) -> tuple[str, str] | None:
         if target.id in matched:
             continue
         if not _safe_drag_target(target.text):
-            return None
+            raise _Unrenderable(drag_reason)
         distractors.append(f"*{_escape(target.text.strip())}*")
 
     return "\n".join(lines), " ".join(distractors)
@@ -389,10 +416,18 @@ def _wrap_question(
     question: Question, assessment_id: str, warnings: list[str]
 ) -> dict[str, object] | None:
     """Map one question to a subcontent wrapper, or drop it with a warning."""
+    try:
+        return _build(question, assessment_id)
+    except _Unrenderable as unrenderable:
+        warnings.append(f"Dropped {question.id} from the H5P package: {unrenderable.reason}.")
+        return None
+
+
+def _build(question: Question, assessment_id: str) -> dict[str, object] | None:
+    """Map one question to a subcontent wrapper, or say why it cannot be."""
     problem = _latex_problem(question)
     if problem is not None:
-        warnings.append(f"Dropped {question.id} from the H5P package: {problem}.")
-        return None
+        raise _Unrenderable(problem)
 
     if isinstance(question, MCQItem):
         return wrap(
@@ -405,16 +440,9 @@ def _wrap_question(
         )
 
     if isinstance(question, FillBlankItem):
-        text = _blanks_text(question)
-        if text is None:
-            warnings.append(
-                f"Dropped {question.id} from the H5P package: an answer or tip contains "
-                "a character (* : /) that H5P's fill-in-the-blank markup cannot express."
-            )
-            return None
         return wrap(
             library=BLANKS,
-            params=_blanks_params(question, text),
+            params=_blanks_params(question, _blanks_text(question)),
             content_type="Fill in the Blanks",
             title=question.id,
             assessment_id=assessment_id,
@@ -422,14 +450,7 @@ def _wrap_question(
         )
 
     if isinstance(question, MatchItem):
-        fields = _dragtext_fields(question)
-        if fields is None:
-            warnings.append(
-                f"Dropped {question.id} from the H5P package: a term contains a character "
-                "(* or :) that H5P's drag-text markup cannot express."
-            )
-            return None
-        text_field, distractors = fields
+        text_field, distractors = _dragtext_fields(question)
         return wrap(
             library=DRAGTEXT,
             params=_dragtext_params(question, text_field, distractors),

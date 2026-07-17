@@ -329,6 +329,28 @@ def test_an_empty_match_target_is_dropped_rather_than_emitted_as_a_blank_draggab
     assert any("q1" in warning for warning in package.warnings)
 
 
+@pytest.mark.parametrize("tip", ["   ", ""])
+def test_a_whitespace_only_tip_does_not_leave_a_trailing_colon(tip):
+    # "answer:" is not a harmless no-op -- parseSolution finds the colon and reads
+    # everything after it as a real, empty tip.
+    item = _blank(blanks=[Blank(id="q1-b1", answers=["evaporation"], tip=tip)])
+    rendered = _params(_set([item]))["questions"][0]
+    assert "evaporation:" not in rendered
+    assert _h5p_parse_blanks(rendered) == [(["evaporation"], None)]
+
+
+def test_a_dropped_question_says_why_it_was_dropped():
+    # Each cause is genuinely different; a warning that names the wrong one sends
+    # the reader looking in the wrong place.
+    markup = _blank(id="q1", blanks=[Blank(id="q1-b1", answers=["m/s"])])
+    maths = _mcq(id="q2", prompt="Solve \\[\n x=1 \n\\].", has_latex=True)
+    package = emit_h5p(_set([markup, maths, _mcq(id="q3")]))
+
+    reasons = " ".join(package.warnings)
+    assert "fill-in-the-blank markup" in reasons
+    assert "multiple lines" in reasons
+
+
 def test_no_emitted_gap_is_ever_empty():
     # The general form of the two tests above: whatever we emit, "**" must never
     # appear in it -- real H5P lexes that into an answer part carrying no text.
