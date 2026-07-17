@@ -51,7 +51,11 @@ from ..schema import (
 )
 from .errors import EmptyAssessmentError
 
-_ASSETS = "app.packaging.scorm.assets"
+#: The player's browser-side half, shipped as package data on `packaging.scorm`
+#: itself — `assets/` is a data directory, not an importable package, and reading
+#: it through its parent keeps the wheel from depending on namespace discovery.
+_ASSETS_PACKAGE = "app.packaging.scorm"
+_ASSETS_DIR = "assets"
 
 _PLAYER_FILES = {
     "scorm/api.js": "api.js",
@@ -69,7 +73,7 @@ class ScormPackage(NamedTuple):
 
 
 def _asset(name: str) -> str:
-    return resources.files(_ASSETS).joinpath(name).read_text(encoding="utf-8")
+    return resources.files(_ASSETS_PACKAGE).joinpath(_ASSETS_DIR, name).read_text(encoding="utf-8")
 
 
 def _script_safe(payload: str) -> str:

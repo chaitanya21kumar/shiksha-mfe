@@ -17,8 +17,11 @@ from __future__ import annotations
 
 import io
 import re
+import tomllib
 import xml.etree.ElementTree as ET
 import zipfile
+from importlib import resources
+from pathlib import Path
 
 import pytest
 
@@ -324,3 +327,29 @@ def test_the_same_inputs_emit_the_same_bytes():
     first = write_scorm(manifest=b"<m/>", files={"index.html": b"x"})
     second = write_scorm(manifest=b"<m/>", files={"index.html": b"x"})
     assert first == second
+
+
+# --- the player has to survive being packaged --------------------------------
+
+
+def test_the_players_assets_are_declared_as_package_data():
+    # The assets are read at emit time through importlib.resources, so if they are
+    # not declared they vanish from a built wheel and every generated package ends
+    # up with no JavaScript in it -- while every test here still passes, because
+    # the source tree has them either way.
+    #
+    # They are attached to `app.packaging.scorm`, a real package, rather than to
+    # `assets`, a plain directory: keying on the directory relies on pyproject's
+    # packages.find defaulting to namespaces=true (PEP 420), which is true today
+    # and is not a thing the wheel should quietly depend on.
+    pyproject = tomllib.loads((Path(__file__).resolve().parents[1] / "pyproject.toml").read_text())
+    package_data = pyproject["tool"]["setuptools"]["package-data"]
+    assert "app.packaging.scorm" in package_data
+    assert any("assets" in pattern for pattern in package_data["app.packaging.scorm"])
+
+
+def test_every_file_the_emitter_reads_actually_exists():
+    # Cheap guard against a rename in one place and not the other.
+    assets = resources.files("app.packaging.scorm").joinpath("assets")
+    for name in ("index.html", "api.js", "player.js", "player.css"):
+        assert assets.joinpath(name).is_file(), name
