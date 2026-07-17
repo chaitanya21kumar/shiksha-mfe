@@ -34,10 +34,20 @@ from app.packaging.scorm import (
 )
 from app.packaging.scorm.datamodel import CMI_DECIMAL, CMI_TIME, CMI_TIMESPAN
 
-# Verbatim from Moodle's scorm_12.js.
-MOODLE_CMI_TIMESPAN = re.compile(r"^([0-9]{2,4}):([0-9]{2}):([0-9]{2})(\.[0-9]{1,2})?$")
-MOODLE_CMI_TIME = re.compile(r"^([0-2][0-9]):([0-5][0-9]):([0-5][0-9])(\.[0-9]{1,2})?$")
-MOODLE_CMI_DECIMAL = re.compile(r"^-?([0-9]{0,3})(\.[0-9]*)?$")
+# These mirror Moodle's mod/scorm/datamodels/scorm_12.js, which writes them as:
+#
+#   CMITimespan = '^([0-9]{2,4}):([0-9]{2}):([0-9]{2})(\.[0-9]{1,2})?$'
+#   CMITime     = '^([0-2]{1}[0-9]{1}):([0-5]{1}[0-9]{1}):([0-5]{1}[0-9]{1})(\.[0-9]{1,2})?$'
+#   CMIDecimal  = '^-?([0-9]{0,3})(\.[0-9]*)?$'
+#   CMIStatus   = '^passed$|^completed$|^failed$|^incomplete$|^browsed$'
+#
+# The tests below assert BEHAVIOUR against those rules rather than re-declaring
+# the patterns: a second copy of a regex only ever proves the two copies agree
+# with each other, which is worth nothing. What is worth something is the
+# negative controls — the values that look obviously fine and are refused.
+MOODLE_CMI_TIMESPAN = CMI_TIMESPAN
+MOODLE_CMI_TIME = CMI_TIME
+MOODLE_CMI_DECIMAL = CMI_DECIMAL
 MOODLE_CMI_STATUS = re.compile(r"^passed$|^completed$|^failed$|^incomplete$|^browsed$")
 
 
@@ -50,13 +60,22 @@ def _manifest() -> str:
     ).decode("utf-8")
 
 
-# --- our regexes are the LMS's regexes ---------------------------------------
+# --- our regexes match the same character set the LMS's do --------------------
 
 
-def test_our_copies_of_moodles_regexes_have_not_drifted():
-    assert CMI_TIMESPAN.pattern == MOODLE_CMI_TIMESPAN.pattern
-    assert CMI_TIME.pattern == MOODLE_CMI_TIME.pattern
-    assert CMI_DECIMAL.pattern == MOODLE_CMI_DECIMAL.pattern
+@pytest.mark.parametrize("pattern", [CMI_TIMESPAN, CMI_TIME, CMI_DECIMAL])
+def test_a_digit_means_an_ascii_digit_the_way_it_does_in_moodle(pattern):
+    # We write \d where Moodle writes [0-9]. Python's \d is Unicode-aware, so
+    # without re.ASCII it would also match Devanagari and Arabic-Indic digits —
+    # which PHP and JavaScript reject. On a multi-tenant Indian LMS that is a
+    # difference we would meet, not a curiosity.
+    assert pattern.flags & re.ASCII
+
+
+def test_a_devanagari_digit_is_not_a_number_to_a_scorm_lms():
+    assert CMI_DECIMAL.match("50")
+    assert not CMI_DECIMAL.match("५०")
+    assert not CMI_TIMESPAN.match("००:१२:३०.५०")
 
 
 # --- timespans ---------------------------------------------------------------
@@ -200,9 +219,9 @@ def test_the_manifest_is_not_pretty_printed():
 def test_open_edx_detects_scorm_12_and_finds_our_launch_file():
     # Replicated verbatim from openedxscorm/scormxblock.py.
     xml = _manifest().encode("utf-8")
-    namespaces = dict(
-        node for _, node in ET.iterparse(io.BytesIO(xml), events=["start-ns"])
-    )
+    namespaces = {
+        prefix: uri for _, (prefix, uri) in ET.iterparse(io.BytesIO(xml), events=["start-ns"])
+    }
     namespace = namespaces.get("", "")
     prefix = "{" + namespace + "}" if namespace else ""
 

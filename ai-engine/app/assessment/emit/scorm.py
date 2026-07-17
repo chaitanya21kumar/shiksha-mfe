@@ -186,72 +186,69 @@ def _blank_interaction(
 # --- the payload the player reads --------------------------------------------
 
 
-def _question_payload(question: Question, warnings: list[str]) -> dict[str, object]:
-    common: dict[str, object] = {
-        "id": question.id,
-        "type": question.type,
-        "points": question.points,
-        "has_latex": question.has_latex,
-        "explanation": question.explanation,
+def _chars_for(count: int) -> list[str]:
+    """The reporting character for each of `count` options, blank past the 36th.
+
+    A question with more options than SCORM can identify still renders — the
+    emitter has already warned that it will not be reported.
+    """
+    chars: list[str] = []
+    for index in range(count):
+        try:
+            chars.append(response_char(index))
+        except ValueError:
+            chars.append("")
+    return chars
+
+
+def _mcq_payload(item: MCQItem, warnings: list[str]) -> dict[str, object]:
+    interaction = _mcq_interaction(item, warnings)
+    chars = _chars_for(len(item.choices))
+    return {
+        "prompt": item.prompt,
+        "single_answer": item.single_answer,
+        # Each option carries the character SCORM will report it as, so the player
+        # never has to reimplement the alphabet.
+        "choices": [
+            {
+                "id": choice.id,
+                "char": char,
+                "text": choice.text,
+                "is_correct": choice.is_correct,
+                "feedback": choice.feedback,
+            }
+            for choice, char in zip(item.choices, chars)
+        ],
+        "interactions": [interaction] if interaction else [],
     }
 
-    if isinstance(question, MCQItem):
-        interaction = _mcq_interaction(question, warnings)
-        chars = []
-        for index, _ in enumerate(question.choices):
-            try:
-                chars.append(response_char(index))
-            except ValueError:
-                chars.append("")
-        common.update(
-            prompt=question.prompt,
-            single_answer=question.single_answer,
-            # The emitter stamps each option with the character SCORM will report
-            # it as, so the player never has to reimplement the alphabet.
-            choices=[
-                {
-                    "id": choice.id,
-                    "char": char,
-                    "text": choice.text,
-                    "is_correct": choice.is_correct,
-                    "feedback": choice.feedback,
-                }
-                for choice, char in zip(question.choices, chars)
-            ],
-            interactions=[interaction] if interaction else [],
-        )
-        return common
 
-    if isinstance(question, MatchItem):
-        interaction = _match_interaction(question, warnings)
-        source_chars = interaction.get("source_chars", {}) if interaction else {}
-        target_chars = interaction.get("target_chars", {}) if interaction else {}
-        if interaction:
-            interaction = {k: v for k, v in interaction.items() if not k.endswith("_chars")}
-        common.update(
-            prompt=question.prompt,
-            sources=[
-                {
-                    "id": s.id,
-                    "char": source_chars.get(s.id, ""),
-                    "text": s.text,
-                    "target_id": s.target_id,
-                }
-                for s in question.sources
-            ],
-            targets=[
-                {"id": t.id, "char": target_chars.get(t.id, ""), "text": t.text}
-                for t in question.targets
-            ],
-            interactions=[interaction] if interaction else [],
-        )
-        return common
+def _match_payload(item: MatchItem, warnings: list[str]) -> dict[str, object]:
+    interaction = _match_interaction(item, warnings)
+    source_chars = interaction.get("source_chars", {}) if interaction else {}
+    target_chars = interaction.get("target_chars", {}) if interaction else {}
+    if interaction:
+        # The char maps were only needed to build the pattern; the player reads
+        # them off the options themselves.
+        interaction = {k: v for k, v in interaction.items() if not k.endswith("_chars")}
+    return {
+        "prompt": item.prompt,
+        "sources": [
+            {"id": s.id, "char": source_chars.get(s.id, ""), "text": s.text, "target_id": s.target_id}
+            for s in item.sources
+        ],
+        "targets": [
+            {"id": t.id, "char": target_chars.get(t.id, ""), "text": t.text} for t in item.targets
+        ],
+        "interactions": [interaction] if interaction else [],
+    }
 
-    assert isinstance(question, FillBlankItem)
+
+def _blanks_payload(item: FillBlankItem, warnings: list[str]) -> dict[str, object]:
     interactions = []
     blanks = []
-    for index, blank in enumerate(question.blanks):
-        interaction = _blank_interaction(question, index, warnings)
+    for index, blank in enumerate(item.blanks):
+        interaction = _blank_interaction(item, index, warnings)
         blanks.append(
             {
                 "id": blank.id,
@@ -262,13 +259,30 @@ def _question_payload(question: Question, warnings: list[str]) -> dict[str, obje
         )
         if interaction:
             interactions.append({**interaction, "id": blank.id})
-    common.update(
-        prompt=question.prompt,
-        text=question.text,
-        blanks=blanks,
-        case_sensitive=question.case_sensitive,
-        interactions=interactions,
-    )
+    return {
+        "prompt": item.prompt,
+        "text": item.text,
+        "blanks": blanks,
+        "case_sensitive": item.case_sensitive,
+        "interactions": interactions,
+    }
+
+
+def _question_payload(question: Question, warnings: list[str]) -> dict[str, object]:
+    """Everything the player needs for one question, including its answer key."""
+    common: dict[str, object] = {
+        "id": question.id,
+        "type": question.type,
+        "points": question.points,
+        "has_latex": question.has_latex,
+        "explanation": question.explanation,
+    }
+    if isinstance(question, MCQItem):
+        common.update(_mcq_payload(question, warnings))
+    elif isinstance(question, MatchItem):
+        common.update(_match_payload(question, warnings))
+    else:
+        common.update(_blanks_payload(question, warnings))
     return common
 
 

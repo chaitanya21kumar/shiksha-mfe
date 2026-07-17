@@ -242,7 +242,7 @@ def test_max_points_is_authoritative_unlike_the_h5p_path():
     # of emit_h5p's "H5P scores this out of a different total" warning.
     assessment = _set([_mcq(id="q1", points=1.0), _match(id="q2", points=2.0)])
     package = emit_scorm(assessment)
-    assert _payload(assessment)["max_points"] == 3.0
+    assert _payload(assessment)["max_points"] == pytest.approx(3.0)
     assert not any("points" in w and "not" in w for w in package.warnings)
 
 

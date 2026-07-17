@@ -54,18 +54,23 @@ INTERACTION_RESULTS = ("correct", "wrong", "unanticipated", "neutral")
 
 # --- formats (Moodle scorm_12.js, verbatim) ----------------------------------
 
+# Moodle writes these with [0-9]; we write \d with re.ASCII, which is the same set.
+# The flag is not optional: Python's bare \d is Unicode-aware and would also match
+# Devanagari and Arabic-Indic digits, which a PHP/JS [0-9] rejects — and this is a
+# multi-tenant Indian LMS, so that is not a hypothetical difference.
+
 #: A duration: HHHH:MM:SS.SS. Note the hours are **2 to 4 digits** — "0:12:30"
 #: is rejected, which would otherwise break every session under ten hours.
-CMI_TIMESPAN = re.compile(r"^([0-9]{2,4}):([0-9]{2}):([0-9]{2})(\.[0-9]{1,2})?$")
+CMI_TIMESPAN = re.compile(r"^(\d{2,4}):(\d{2}):(\d{2})(\.\d{1,2})?$", re.ASCII)
 
 #: A time of day: HH:MM:SS.SS. Different from a timespan, and easy to confuse —
 #: cmi.interactions.n.time is a time of day, cmi.interactions.n.latency is a
 #: duration.
-CMI_TIME = re.compile(r"^([0-2][0-9]):([0-5][0-9]):([0-5][0-9])(\.[0-9]{1,2})?$")
+CMI_TIME = re.compile(r"^([0-2]\d):([0-5]\d):([0-5]\d)(\.\d{1,2})?$", re.ASCII)
 
 #: At most three integer digits, so a score or weighting over 999 fails on format
 #: before it ever fails on range.
-CMI_DECIMAL = re.compile(r"^-?([0-9]{0,3})(\.[0-9]*)?$")
+CMI_DECIMAL = re.compile(r"^-?(\d{0,3})(\.\d*)?$", re.ASCII)
 
 #: Printable ASCII, up to 255.
 CMI_IDENTIFIER = re.compile(r"^[!-~]{0,255}$")

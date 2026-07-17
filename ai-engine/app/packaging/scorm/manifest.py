@@ -31,9 +31,14 @@ from __future__ import annotations
 import re
 import xml.etree.ElementTree as ET
 
-CP_NAMESPACE = "http://www.imsproject.org/xsd/imscp_rootv1p1p2"
-ADLCP_NAMESPACE = "http://www.adlnet.org/xsd/adlcp_rootv1p2"
-XSI_NAMESPACE = "http://www.w3.org/2001/XMLSchema-instance"
+# These are XML namespace *identifiers*, not addresses: nothing dereferences them,
+# and their only job is to be compared, character for character, against what the
+# IMS and ADL specifications define. Rewriting them to https would not harden
+# anything — it would produce a manifest that no LMS recognises, which is the one
+# failure this module exists to prevent. Hence the suppressions.
+CP_NAMESPACE = "http://www.imsproject.org/xsd/imscp_rootv1p1p2"  # NOSONAR: XML namespace, not a URL
+ADLCP_NAMESPACE = "http://www.adlnet.org/xsd/adlcp_rootv1p2"  # NOSONAR: XML namespace, not a URL
+XSI_NAMESPACE = "http://www.w3.org/2001/XMLSchema-instance"  # NOSONAR: XML namespace, not a URL
 
 SCHEMA = "ADL SCORM"
 SCHEMA_VERSION = "1.2"
