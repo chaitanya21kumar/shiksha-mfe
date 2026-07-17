@@ -34,7 +34,7 @@ from ..ingestion.schema import ParsedDocument
 from ..ingestion.service import parse_upload
 from ..summarization.pipeline import GenerationConfig
 from ..summarization.router import get_llm_client
-from .emit import H5PPackage, emit_h5p
+from .emit import H5PPackage, ScormPackage, emit_h5p, emit_scorm
 from .pipeline import ALL_TYPES, QuestionType, generate_assessment
 from .schema import AssessmentSet
 
@@ -49,6 +49,10 @@ _MAX_HEADER_WARNINGS = 10
 #: identifies it by extension, so the honest label is the one that describes the
 #: bytes — the filename in Content-Disposition carries the rest.
 _H5P_MEDIA_TYPE = "application/zip"
+
+#: A SCORM package is a plain ZIP, and is identified by its manifest, not by a
+#: media type.
+_SCORM_MEDIA_TYPE = "application/zip"
 
 _ERROR_RESPONSES = {
     400: {"description": "The document has no text to build questions from"},
@@ -84,7 +88,7 @@ def _resolve_types(question_types: list[QuestionType] | None) -> list[QuestionTy
     return list(dict.fromkeys(question_types or ALL_TYPES))
 
 
-def _package_response(package: H5PPackage, media_type: str) -> Response:
+def _package_response(package: H5PPackage | ScormPackage, media_type: str) -> Response:
     """Return a built package as a download, with any warnings in the headers."""
     headers = {
         "Content-Disposition": f'attachment; filename="{package.filename}"',
@@ -203,3 +207,63 @@ async def assess_h5p_file(
         pass_percentage=pass_percentage,
     )
     return _package_response(emit_h5p(assessment), _H5P_MEDIA_TYPE)
+
+
+@router.post(
+    "/assess/scorm",
+    response_class=Response,
+    responses={
+        200: {
+            "content": {_SCORM_MEDIA_TYPE: {"schema": {"type": "string", "format": "binary"}}},
+            "description": "A SCORM 1.2 package, importable into Moodle 4.x and Open edX",
+        },
+        400: {"description": "The set has no questions to package"},
+    },
+)
+async def assess_scorm(assessment: AssessmentSet) -> Response:
+    """Package an assessment as a SCORM 1.2 course (`.zip`).
+
+    Unlike the H5P package, this one carries its own player: the LMS supplies only
+    a JavaScript API to report through. That is why per-question `points` is
+    honoured exactly here, where H5P has to score on its own scale.
+    """
+    return _package_response(emit_scorm(assessment), _SCORM_MEDIA_TYPE)
+
+
+@router.post(
+    "/assess/scorm/file",
+    response_class=Response,
+    responses={
+        200: {
+            "content": {_SCORM_MEDIA_TYPE: {"schema": {"type": "string", "format": "binary"}}},
+            "description": "A SCORM 1.2 package built from the uploaded document",
+        },
+        **_ERROR_RESPONSES,
+        400: {
+            "description": "The document has no text to build questions from, "
+            "or the set has no questions to package"
+        },
+        413: {"description": "File too large"},
+        415: {"description": "Unsupported file type"},
+    },
+)
+async def assess_scorm_file(
+    file: Annotated[UploadFile, File()],
+    client: Annotated[httpx.AsyncClient, Depends(get_llm_client)],
+    question_types: Annotated[list[QuestionType] | None, _TYPES_QUERY] = None,
+    count: Annotated[int, _COUNT_QUERY] = 5,
+    language: Annotated[str, _LANGUAGE_QUERY] = "en",
+    pass_percentage: Annotated[int, _PASS_QUERY] = 50,
+) -> Response:
+    """Parse a document, generate an assessment, and package it as SCORM 1.2."""
+    document = await parse_upload(file)
+    assessment = await generate_assessment(
+        client,
+        document,
+        _generation_config(),
+        question_types=_resolve_types(question_types),
+        count=count,
+        language=language,
+        pass_percentage=pass_percentage,
+    )
+    return _package_response(emit_scorm(assessment), _SCORM_MEDIA_TYPE)
