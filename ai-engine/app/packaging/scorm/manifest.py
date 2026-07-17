@@ -31,14 +31,16 @@ from __future__ import annotations
 import re
 import xml.etree.ElementTree as ET
 
-# These are XML namespace *identifiers*, not addresses: nothing dereferences them,
-# and their only job is to be compared, character for character, against what the
-# IMS and ADL specifications define. Rewriting them to https would not harden
-# anything — it would produce a manifest that no LMS recognises, which is the one
-# failure this module exists to prevent. Hence the suppressions.
-CP_NAMESPACE = "http://www.imsproject.org/xsd/imscp_rootv1p1p2"  # NOSONAR: XML namespace, not a URL
-ADLCP_NAMESPACE = "http://www.adlnet.org/xsd/adlcp_rootv1p2"  # NOSONAR: XML namespace, not a URL
-XSI_NAMESPACE = "http://www.w3.org/2001/XMLSchema-instance"  # NOSONAR: XML namespace, not a URL
+# These are XML namespace *identifiers*, not addresses. Nothing dereferences them;
+# their only job is to be compared, character for character, against the exact
+# strings the IMS and ADL specifications define — the same way `xsi` is defined as
+# "http://www.w3.org/2001/XMLSchema-instance" by the W3C and is spelled that way
+# everywhere, forever. Rewriting them to https would harden nothing and would
+# produce a manifest that no LMS recognises, which is precisely the failure this
+# module exists to prevent. They are therefore suppressed rather than "fixed".
+CP_NAMESPACE = "http://www.imsproject.org/xsd/imscp_rootv1p1p2"  # NOSONAR
+ADLCP_NAMESPACE = "http://www.adlnet.org/xsd/adlcp_rootv1p2"  # NOSONAR
+XSI_NAMESPACE = "http://www.w3.org/2001/XMLSchema-instance"  # NOSONAR
 
 SCHEMA = "ADL SCORM"
 SCHEMA_VERSION = "1.2"
