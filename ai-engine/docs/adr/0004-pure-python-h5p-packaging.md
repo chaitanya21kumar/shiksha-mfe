@@ -96,6 +96,20 @@ say so in `warnings` — the same discipline ADR-0003 uses for ungrounded questi
 - **A tenant prerequisite, documented rather than hidden:** the target LMS must
   have the H5P content types installed, and MathDisplay enabled for LaTeX. A
   content-only package cannot ship either.
+- **Playing a package is not the same as importing one, and only the second is
+  the real test.** A JS player renders `content.json` as written; Moodle first
+  runs H5P's *PHP* validator over it, which rewrites fields. Anything declared
+  without `tags` in its semantics goes through `htmlspecialchars`, so markup in
+  such a field reaches the learner as literal characters — and no amount of
+  browser testing reveals it. Before changing what we emit, run the output
+  through the PHP validator, not just the player.
+- **Semantics defaults are not runtime defaults.** The H5P editor applies a
+  field's semantics default; a machine-written `content.json` never goes through
+  the editor. So any field a library's JS *reads* without defaulting itself must
+  be emitted explicitly, or it resolves to `undefined` in front of a learner.
+  That is why `behaviour.type`, `singlePoint`, `randomAnswers`, `caseSensitive`
+  and the MultiChoice `UI` labels are all written out even where they look
+  redundant.
 - **Residual risk:** a tenant running an older Question Set has a different
   whitelist, and the package would be rejected. That is what the constants table
   absorbs, and it is the trigger to revisit bundling — the counter-argument is
