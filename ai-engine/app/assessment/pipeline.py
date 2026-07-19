@@ -38,23 +38,26 @@ from ..ingestion.schema import Block, BlockKind, Page, ParsedDocument
 from ..summarization.llm_client import LLMBadResponse, chat_json
 from ..summarization.pipeline import EmptyDocumentError, GenerationConfig
 from . import prompts
+from .grading import score_short_answer
 from .schema import (
     AssessmentSet,
     AssessmentSource,
     Blank,
     Choice,
     FillBlankItem,
+    KeyPoint,
     MatchItem,
     MatchSource,
     MatchTarget,
     MCQItem,
     Question,
+    ShortAnswerItem,
 )
 
 logger = logging.getLogger("ai_engine.assessment")
 
-QuestionType = Literal["mcq", "match", "fill_blank"]
-ALL_TYPES: tuple[QuestionType, ...] = ("mcq", "match", "fill_blank")
+QuestionType = Literal["mcq", "match", "fill_blank", "short_answer"]
+ALL_TYPES: tuple[QuestionType, ...] = ("mcq", "match", "fill_blank", "short_answer")
 
 # Bound the work so a huge document cannot produce an unbounded prompt or an
 # unbounded number of generations.
@@ -221,6 +224,13 @@ class _BlankOut(BaseModel):
     tip: str | None = None
 
 
+class _KeyPointOut(BaseModel):
+    text: str = ""
+    accepted: list[str] = Field(default_factory=list, validation_alias=AliasChoices("accepted", "phrases"))
+    feedback_hit: str | None = None
+    feedback_miss: str | None = None
+
+
 class _QuestionOut(BaseModel):
     """The union of fields any question type may return; unused ones stay empty."""
 
@@ -243,6 +253,13 @@ class _QuestionOut(BaseModel):
     text: str = Field(default="", validation_alias=AliasChoices("text", "sentence"))
     blanks: list[_BlankOut] = Field(
         default_factory=list, validation_alias=AliasChoices("blanks", "gaps")
+    )
+    # short answer
+    key_points: list[_KeyPointOut] = Field(
+        default_factory=list, validation_alias=AliasChoices("key_points", "keyPoints", "points")
+    )
+    model_answer: str = Field(
+        default="", validation_alias=AliasChoices("model_answer", "modelAnswer", "sample_answer")
     )
 
     @field_validator("distractors", mode="before")
@@ -391,6 +408,91 @@ def _assemble_fill_blank(
         return None
 
 
+#: A key point's phrases are matched literally, so a form carrying H5P.Essay's
+#: wildcard or regex syntax would match something other than itself.
+def _matchable(form: str) -> bool:
+    cleaned = form.strip()
+    if not cleaned or "*" in cleaned or len(cleaned) > 60:
+        return False
+    return not (cleaned.startswith("/") and cleaned.endswith("/"))
+
+
+def _grounded_key_points(
+    raw: list[_KeyPointOut], qid: str, answer_sources: list[str]
+) -> list[KeyPoint]:
+    """Build the mark scheme, keeping only phrases the source actually contains.
+
+    A mark scheme is an answer key, so it gets the same treatment the fill-in-the-blank
+    answers get: an invented phrase would award — or withhold — a mark for wording the
+    tenant's material never used. Phrases are dropped silently and a key point that
+    loses all of them is dropped with it; the caller warns if too few survive.
+    """
+    points: list[KeyPoint] = []
+    for i, item in enumerate(raw, start=1):
+        text = _clean(item.text)
+        forms = _grounded_answers([f for f in item.accepted if _matchable(f)], answer_sources)
+        if not text or not forms:
+            continue
+        points.append(
+            KeyPoint(
+                id=f"{qid}-k{i}",
+                text=text,
+                accepted=forms[:6],
+                # The model never proposes marks. One mark per point keeps the
+                # points/marks ratio at exactly one and the max score integral.
+                weight=1,
+                feedback_hit=(_clean(item.feedback_hit or "") or None),
+                feedback_miss=(_clean(item.feedback_miss or "") or None),
+            )
+        )
+    return points
+
+
+def _assemble_short_answer(
+    out: _QuestionOut, qid: str, source_index: int | None, haystacks: list[str], warnings: list[str]
+) -> ShortAnswerItem | None:
+    prompt = _clean(out.prompt)
+    model_answer = _clean(out.model_answer)
+    if not prompt or not model_answer or not _is_grounded(out.evidence, haystacks):
+        warnings.append("Dropped a short-answer question that was empty or not grounded in the source.")
+        return None
+
+    answer_sources = [_normalise(out.evidence), *haystacks]
+    key_points = _grounded_key_points(out.key_points, qid, answer_sources)[:4]
+    if len(key_points) < 2:
+        warnings.append("Dropped a short-answer question whose mark scheme was not grounded in the source.")
+        return None
+
+    try:
+        item = ShortAnswerItem(
+            id=qid,
+            source_index=source_index,
+            prompt=prompt,
+            key_points=key_points,
+            model_answer=model_answer,
+            points=float(sum(k.weight for k in key_points)),
+            explanation=(out.explanation or None),
+            # A deterrent against answering with the bare key phrases. It raises the
+            # cost of stuffing; it cannot detect it, and we do not pretend otherwise.
+            min_chars=min(120, len(model_answer) // 2),
+            max_chars=max(400, len(model_answer) * 3),
+            has_latex=_has_latex(prompt, model_answer),
+        )
+    except ValidationError:
+        warnings.append("Dropped a malformed short-answer question.")
+        return None
+
+    # The mark scheme has to be satisfiable by the answer it ships with. If the model
+    # answer does not itself make every point it demands, the scheme is incoherent —
+    # and a learner who wrote exactly that answer would be marked down.
+    if score_short_answer(item, model_answer) < item.points:
+        warnings.append(
+            "Dropped a short-answer question whose model answer did not make its own key points."
+        )
+        return None
+    return item
+
+
 @dataclass(frozen=True)
 class _TypeSpec:
     prompt: Callable[[list[tuple[int, str | None, str]], int], str]
@@ -401,6 +503,7 @@ _SPECS: dict[QuestionType, _TypeSpec] = {
     "mcq": _TypeSpec(prompts.mcq_prompt, _assemble_mcq),
     "match": _TypeSpec(prompts.match_prompt, _assemble_match),
     "fill_blank": _TypeSpec(prompts.fill_blank_prompt, _assemble_fill_blank),
+    "short_answer": _TypeSpec(prompts.short_answer_prompt, _assemble_short_answer),
 }
 
 

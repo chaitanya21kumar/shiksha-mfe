@@ -648,3 +648,108 @@ def test_match_with_object_distractors_is_kept():
 
     q = _run(_lesson(), handler, types=("match",)).questions[0]
     assert [t.text for t in q.targets] == ["Food", "Energy", "Water"]  # object dropped, "Water" kept
+
+
+# --- short answer: the mark scheme has to be grounded too --------------------
+
+
+def _short_answer_handler(payload: dict):
+    """A handler returning one short-answer question, however `payload` shapes it."""
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        return _reply([payload])
+
+    return handler
+
+
+def _valid_short() -> dict:
+    return {
+        "source_section": 1,
+        "evidence": _EVIDENCE,
+        "prompt": "Describe where and how plants make food.",
+        "key_points": [
+            {"text": "They use light", "accepted": ["from light"]},
+            {"text": "It happens in the chloroplast", "accepted": ["the chloroplast"]},
+        ],
+        "model_answer": "Plants make food from light in the chloroplast.",
+    }
+
+
+def test_a_grounded_short_answer_is_built_with_engine_assigned_ids():
+    doc = _lesson()
+    result = _run(doc, _short_answer_handler(_valid_short()), types=("short_answer",))
+
+    assert result.counts == {"short_answer": 1}
+    item = result.questions[0]
+    assert item.type == "short_answer"
+    assert [k.id for k in item.key_points] == ["q1-k1", "q1-k2"]
+    # One mark per key point, and points pinned to the sum.
+    assert item.points == pytest.approx(2.0)
+    assert result.warnings == []
+
+
+def test_a_key_point_phrase_the_source_does_not_contain_is_dropped():
+    # The same rule the fill-in-the-blank answers follow. A mark scheme IS an answer
+    # key, so an invented phrase would award or withhold a mark for wording the
+    # tenant's material never used.
+    payload = _valid_short()
+    payload["key_points"][0]["accepted"] = ["from light", "via photons"]
+    result = _run(_lesson(), _short_answer_handler(payload), types=("short_answer",))
+
+    assert result.questions[0].key_points[0].accepted == ["from light"]
+
+
+def test_a_short_answer_whose_scheme_is_entirely_invented_is_dropped():
+    payload = _valid_short()
+    for point in payload["key_points"]:
+        point["accepted"] = ["nothing the source says"]
+    result = _run(_lesson(), _short_answer_handler(payload), types=("short_answer",))
+
+    assert result.questions == []
+    assert any("mark scheme was not grounded" in w for w in result.warnings)
+
+
+def test_a_short_answer_whose_model_answer_misses_its_own_points_is_dropped():
+    # The scheme has to be satisfiable by the answer it ships with. Otherwise a
+    # learner who wrote exactly the model answer would be marked down by it.
+    payload = _valid_short()
+    payload["model_answer"] = "Plants do it somehow."
+    result = _run(_lesson(), _short_answer_handler(payload), types=("short_answer",))
+
+    assert result.questions == []
+    assert any("did not make its own key points" in w for w in result.warnings)
+
+
+def test_a_short_answer_with_ungrounded_evidence_is_dropped():
+    payload = _valid_short()
+    payload["evidence"] = "A sentence that appears nowhere in the document."
+    result = _run(_lesson(), _short_answer_handler(payload), types=("short_answer",))
+
+    assert result.questions == []
+    assert any("not grounded in the source" in w for w in result.warnings)
+
+
+def test_a_short_answer_with_only_one_usable_key_point_is_dropped():
+    payload = _valid_short()
+    payload["key_points"] = [{"text": "They use light", "accepted": ["from light"]}]
+    result = _run(_lesson(), _short_answer_handler(payload), types=("short_answer",))
+
+    assert result.questions == []
+    assert any("mark scheme" in w for w in result.warnings)
+
+
+def test_more_than_four_key_points_are_truncated_rather_than_refused():
+    # The contract caps at four because marker agreement decays with mark count.
+    # Truncating keeps a usable question where refusing would lose it entirely.
+    payload = _valid_short()
+    payload["key_points"] = [
+        {"text": f"Point {i}", "accepted": [phrase]}
+        for i, phrase in enumerate(
+            ["Plants", "make food", "from light", "the chloroplast", "food from"], start=1
+        )
+    ]
+    payload["model_answer"] = _EVIDENCE
+    result = _run(_lesson(), _short_answer_handler(payload), types=("short_answer",))
+
+    assert len(result.questions[0].key_points) == 4
+    assert result.questions[0].points == pytest.approx(4.0)
