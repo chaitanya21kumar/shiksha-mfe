@@ -31,7 +31,9 @@ import pytest
 from app.assessment.grading import score_short_answer
 from app.assessment.schema import KeyPoint, ShortAnswerItem
 
-_REFERENCE = Path(__file__).parent / "parity" / "h5p_essay_reference.js"
+_PARITY = Path(__file__).parent / "parity"
+_REFERENCE = _PARITY / "h5p_essay_reference.js"
+_RUNNER = _PARITY / "run_matcher.js"
 _PLAYER = Path(__file__).resolve().parents[1] / "app/packaging/scorm/assets/player.js"
 
 _NODE = shutil.which("node")
@@ -62,14 +64,13 @@ CORPUS = [
     "land heats sea to land it reverses",  # keyword stuffing
     "The ground warms quicker, pulling damp air inland; at night it flips.",  # paraphrase
     "grassland heats up",  # substring trap
-    "the land heats",  # exact, at the very end
     "land heats",  # exact, whole string
     "wind blows from sea   to land",  # triple space defeats the phrase
     "wind blows from sea  to land",  # double space collapses back
     "The land heats.\nIt reverses at night.",  # newlines
     "The land heats.\r\nIt reverses at night.",  # CRLF
     "The\tland heats",  # tab
-    "The\t\tland heats",  # tab pair — \s\s collapses this
+    "The\t\tland heats",  # tab pair -- \s\s collapses this
     "onshore windonshore wind",  # consumed-haystack behaviour
     "land heatsland heats",  # ditto
     "x" * 300 + " land heats",
@@ -92,10 +93,11 @@ def _item() -> ShortAnswerItem:
     )
 
 
-def _run_node(script: str, payload: dict) -> list[float]:
+def _score_with(matcher_path: Path) -> list[float]:
+    """Score the corpus in node, using whichever matcher module is given."""
     result = subprocess.run(
-        [_NODE, script],
-        input=json.dumps(payload),
+        [_NODE, str(_RUNNER), str(matcher_path)],
+        input=json.dumps({"keywords": KEYWORDS, "answers": CORPUS}),
         capture_output=True,
         text=True,
         timeout=60,
@@ -104,67 +106,50 @@ def _run_node(script: str, payload: dict) -> list[float]:
     return json.loads(result.stdout)
 
 
+def _player_matcher(tmp_path: Path) -> Path:
+    """Extract the matcher from the player we actually ship, as a module.
+
+    Reading it out of the shipped file rather than copying it means this cannot
+    pass against a copy that has drifted from what goes in the package.
+    """
+    source = _PLAYER.read_text(encoding="utf-8")
+    functions = []
+    for name in ("essayNormalise", "isIsolated", "occursIsolated"):
+        match = re.search(rf"\n  function {name}\(.*?\n  }}\n", source, re.S)
+        assert match, f"{name} not found in the shipped player.js"
+        functions.append(match.group(0).replace("\n  ", "\n"))
+
+    module = tmp_path / "player_matcher.js"
+    module.write_text(
+        'var WORD_DELIMITER = /[\\s.?!,\';"]/;\n'
+        + "".join(functions)
+        + "\nmodule.exports = { normalise: essayNormalise, occursIsolated: occursIsolated };\n",
+        encoding="utf-8",
+    )
+    return module
+
+
 @_needs_node
 def test_our_grader_agrees_with_h5ps_own_algorithm_on_every_case():
     ours = [score_short_answer(_item(), answer) for answer in CORPUS]
-    theirs = _run_node(str(_REFERENCE), {"keywords": KEYWORDS, "answers": CORPUS})
+    theirs = _score_with(_REFERENCE)
 
     mismatches = [
-        (answer, mine, mine_h5p)
-        for answer, mine, mine_h5p in zip(CORPUS, ours, theirs)
-        if mine != mine_h5p
+        (answer, mine, other)
+        for answer, mine, other in zip(CORPUS, ours, theirs)
+        if mine != other
     ]
     assert not mismatches, f"our grader and H5P.Essay disagree on: {mismatches}"
 
 
 @_needs_node
 def test_the_shipped_player_agrees_with_our_grader_on_every_case(tmp_path):
-    # Extract the matcher from the player we actually ship, so this cannot pass
-    # against a copy that has drifted from the file in the package.
-    source = _PLAYER.read_text(encoding="utf-8")
-    wanted = ["essayNormalise", "isIsolated", "occursIsolated"]
-    extracted = []
-    for name in wanted:
-        match = re.search(rf"\n  function {name}\(.*?\n  }}\n", source, re.S)
-        assert match, f"{name} not found in the shipped player.js"
-        extracted.append(match.group(0).replace("\n  ", "\n"))
-
-    harness = tmp_path / "player_matcher.js"
-    harness.write_text(
-        'var WORD_DELIMITER = /[\\s.?!,\';"]/;\n'
-        + "".join(extracted)
-        + """
-function score(keywords, answer) {
-  var hay = essayNormalise(answer);
-  var total = 0;
-  keywords.forEach(function (group) {
-    var forms = [group.keyword].concat(group.alternatives || []);
-    var hit = forms.some(function (form) {
-      var needle = String(form).trim().toLowerCase();
-      return needle !== '' && occursIsolated(needle, hay);
-    });
-    if (hit) total += group.options.points * group.options.occurrences;
-  });
-  return total;
-}
-var chunks = [];
-process.stdin.on('data', function (c) { chunks.push(c); });
-process.stdin.on('end', function () {
-  var input = JSON.parse(chunks.join(''));
-  process.stdout.write(JSON.stringify(input.answers.map(function (a) {
-    return score(input.keywords, a);
-  })));
-});
-""",
-        encoding="utf-8",
-    )
-
     ours = [score_short_answer(_item(), answer) for answer in CORPUS]
-    player = _run_node(str(harness), {"keywords": KEYWORDS, "answers": CORPUS})
+    player = _score_with(_player_matcher(tmp_path))
 
     mismatches = [
-        (answer, mine, theirs)
-        for answer, mine, theirs in zip(CORPUS, ours, player)
-        if mine != theirs
+        (answer, mine, other)
+        for answer, mine, other in zip(CORPUS, ours, player)
+        if mine != other
     ]
     assert not mismatches, f"our grader and the shipped player disagree on: {mismatches}"

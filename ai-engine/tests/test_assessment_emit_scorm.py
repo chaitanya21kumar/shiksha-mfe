@@ -403,4 +403,4 @@ def test_max_points_includes_the_short_answer():
         KeyPoint(id="q2-k1", text="A", accepted=["land heats"]),
         KeyPoint(id="q2-k2", text="B", accepted=["sea to land"]),
     ])])
-    assert _payload(assessment)["max_points"] == 3.0
+    assert _payload(assessment)["max_points"] == pytest.approx(3.0)

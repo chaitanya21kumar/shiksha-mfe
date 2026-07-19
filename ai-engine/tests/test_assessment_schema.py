@@ -197,16 +197,19 @@ def test_a_short_answer_caps_at_four_key_points():
         _short(key_points=_key_points(5), points=5.0)
 
 
-def test_duplicate_key_point_ids_and_texts_are_rejected():
+def test_duplicate_key_point_ids_are_rejected():
     same_id = [
-        KeyPoint(id="q1-k1", text="One", accepted=["a"]),
-        KeyPoint(id="q1-k1", text="Two", accepted=["b"]),
+        KeyPoint(id="q1-k1", text="One", accepted=["phrase one"]),
+        KeyPoint(id="q1-k1", text="Two", accepted=["phrase two"]),
     ]
     with pytest.raises(ValidationError, match="ids must be unique"):
         _short(key_points=same_id)
+
+
+def test_duplicate_key_point_texts_are_rejected():
     same_text = [
-        KeyPoint(id="q1-k1", text="Same", accepted=["a"]),
-        KeyPoint(id="q1-k2", text="same", accepted=["b"]),
+        KeyPoint(id="q1-k1", text="Same", accepted=["phrase one"]),
+        KeyPoint(id="q1-k2", text="same", accepted=["phrase two"]),
     ]
     with pytest.raises(ValidationError, match="texts must be unique"):
         _short(key_points=same_text)
