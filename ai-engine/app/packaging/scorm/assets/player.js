@@ -342,7 +342,16 @@
       var list = el("ul", null);
       question.key_points.forEach(function (point) {
         var made = pointIsMade(point, responses[question.id]);
-        var row = el("li", made ? "point made" : "point missed", point.text);
+        var row = el("li", made ? "point made" : "point missed", null);
+        // Green and red alone would leave a colour-blind learner unable to read
+        // their own result (WCAG 1.4.1), so the outcome is carried by a glyph as
+        // well, and spelled out in words for a screen reader. The H5P package
+        // marks its feedback rows the same way.
+        row.appendChild(el("span", "sr-only", made ? "Point made: " : "Point missed: "));
+        var mark = el("span", "mark", made ? "✓" : "✗");
+        mark.setAttribute("aria-hidden", "true");
+        row.appendChild(mark);
+        row.appendChild(document.createTextNode(" " + point.text));
         var hint = made ? point.feedback_hit : point.feedback_miss;
         if (hint) row.appendChild(el("span", "hint", " — " + hint));
         list.appendChild(row);

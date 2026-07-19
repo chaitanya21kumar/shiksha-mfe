@@ -395,6 +395,20 @@ def _dragtext_fields(item: MatchItem) -> tuple[str, str]:
     return "\n".join(lines), " ".join(distractors)
 
 
+#: Prefixes for the Essay feedback table. Essay gives every row the same styling
+#: and no hit/miss affordance of its own, so the distinction has to be carried by
+#: the text. Plain U+2713/U+2717 rather than emoji: they render in the LMS's own
+#: font at the LMS's own size, and degrade to a visible glyph everywhere.
+_HIT_MARK = "✓"
+_MISS_MARK = "✗"
+
+
+def _criterion_feedback(mark: str, criterion: str, remark: str | None) -> str:
+    """One row of the mark scheme, named and marked made-or-missed."""
+    line = f"{mark} {_escape(criterion)}"
+    return f"{line} — {_escape(remark)}" if remark else line
+
+
 def _essay_params(item: ShortAnswerItem) -> dict[str, object]:
     """Params for H5P.Essay — the only open-response type a Question Set accepts.
 
@@ -435,11 +449,18 @@ def _essay_params(item: ShortAnswerItem) -> dict[str, object]:
                     # of near-miss that would silently score the same answer
                     # differently in the two packages. Recall comes from `accepted`.
                     "forgiveMistakes": False,
-                    # Falls back to the criterion itself, so the learner always
-                    # learns which point they made or missed even when the model
-                    # supplied no feedback of its own.
-                    "feedbackIncluded": _escape(point.feedback_hit or point.text),
-                    "feedbackMissed": _escape(point.feedback_miss or point.text),
+                    # Always names the criterion and marks it made or missed.
+                    # Essay renders every row of its feedback table identically, so
+                    # a bare sentence leaves the learner unable to tell a point they
+                    # made from one they missed — which is the whole disclosure
+                    # ADR-0006 rests on. The model's own remark, when it wrote one,
+                    # follows the criterion rather than replacing it.
+                    "feedbackIncluded": _criterion_feedback(
+                        _HIT_MARK, point.text, point.feedback_hit
+                    ),
+                    "feedbackMissed": _criterion_feedback(
+                        _MISS_MARK, point.text, point.feedback_miss
+                    ),
                     # Both are selects; "none" keeps the learner-facing wording ours
                     # and stops a missed-point message printing the answer it wanted.
                     "feedbackIncludedWord": "none",

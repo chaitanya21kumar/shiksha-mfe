@@ -697,3 +697,39 @@ def test_an_accepted_form_containing_an_ampersand_round_trips():
     keyword = _params(_set([item]))["keywords"][0]["keyword"]
     assert "&amp;" in keyword
     assert html.unescape(keyword) == "r&d spending"
+
+
+def test_the_feedback_table_says_which_points_were_made_and_which_were_missed():
+    # Essay styles every row of its feedback table identically and offers no
+    # hit/miss affordance, so a bare sentence leaves the two indistinguishable on
+    # screen — and the disclosure ADR-0006 rests on is exactly that distinction.
+    # Caught by looking at the rendered package rather than at the params.
+    options = [k["options"] for k in _params(_set([_short()]))["keywords"]]
+    for group in options:
+        assert group["feedbackIncluded"].startswith("✓ ")
+        assert group["feedbackMissed"].startswith("✗ ")
+
+
+def test_every_criterion_is_named_in_its_own_feedback():
+    # Whether or not the model wrote a remark, the learner is told which point the
+    # row is about — otherwise "Yes, that is the driver." names nothing.
+    item = _short(key_points=[
+        KeyPoint(id="q1-k1", text="Land warms faster", accepted=["land heats"], feedback_hit="Yes."),
+        KeyPoint(id="q1-k2", text="Air moves inland", accepted=["sea to land"]),
+    ], model_answer="land heats and sea to land")
+    groups = [k["options"] for k in _params(_set([item]))["keywords"]]
+    assert groups[0]["feedbackIncluded"] == "✓ Land warms faster — Yes."
+    assert groups[1]["feedbackIncluded"] == "✓ Air moves inland"
+    assert groups[1]["feedbackMissed"] == "✗ Air moves inland"
+
+
+def test_a_models_remark_is_escaped_where_it_joins_the_criterion():
+    # The remark is model-written text landing in an HTML feedback cell.
+    item = _short(key_points=[
+        KeyPoint(id="q1-k1", text="Land warms", accepted=["land heats"],
+                 feedback_hit="<script>alert(1)</script>"),
+        KeyPoint(id="q1-k2", text="Air moves inland", accepted=["sea to land"]),
+    ], model_answer="land heats and sea to land")
+    included = _params(_set([item]))["keywords"][0]["options"]["feedbackIncluded"]
+    assert "<script>" not in included
+    assert "&lt;script&gt;" in included

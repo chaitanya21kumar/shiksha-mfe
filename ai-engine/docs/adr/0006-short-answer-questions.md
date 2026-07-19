@@ -86,6 +86,16 @@ model answer**. Marking a learner cannot inspect is not marking they can learn
 from — and someone who was right in their own words can at least see why they
 scored what they did.
 
+That disclosure only counts if the learner can actually read it, which took a
+second pass to get right in both packages. The SCORM results screen separated made
+from missed points by colour alone, which a red/green colour-blind learner cannot
+read (WCAG 1.4.1); and H5P.Essay styles every row of its feedback table
+identically and has no slot for a named criterion, so a made point and a missed one
+arrived on screen as two indistinguishable sentences. Both now carry a `✓`/`✗`
+glyph and name the criterion, with the outcome spelled out in words for a screen
+reader on the SCORM side. Neither was visible in the emitted parameters — both
+turned up only when the packages were played and looked at.
+
 ## Consequences
 
 - **The engine's no-hallucination guarantee holds for the new type**, and the
