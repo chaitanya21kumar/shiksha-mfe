@@ -186,15 +186,17 @@ def test_short_answer_points_must_equal_the_summed_key_point_weights():
 
 def test_a_short_answer_needs_at_least_two_key_points():
     # One key point is a fill-in-the-blank wearing a textarea.
+    only_one = _key_points(1)
     with pytest.raises(ValidationError):
-        _short(key_points=_key_points(1), points=1.0)
+        _short(key_points=only_one, points=1.0)
 
 
 def test_a_short_answer_caps_at_four_key_points():
     # Agreement between markers decays as marks per item grow, so the ceiling is a
     # contract rule rather than a prompt request.
+    five = _key_points(5)
     with pytest.raises(ValidationError):
-        _short(key_points=_key_points(5), points=5.0)
+        _short(key_points=five, points=5.0)
 
 
 def test_duplicate_key_point_ids_are_rejected():
