@@ -34,8 +34,8 @@ A.3** (narration) turns the same parsed document into a spoken `NarrationScript`
 estimate — exposed at `POST /narrate` and `POST /narrate/file`.
 
 **Module B** (assessment) turns a parsed document into a source-grounded
-`AssessmentSet` — multiple-choice, match-the-pair, and fill-in-the-blank
-questions — exposed at `POST /assess` and `POST /assess/file`. Every question is
+`AssessmentSet` — multiple-choice, match-the-pair, fill-in-the-blank, and
+short-answer questions — exposed at `POST /assess` and `POST /assess/file`. Every question is
 verified against the source and dropped if it cannot be grounded, so nothing is
 hallucinated. The contract is neutral: it carries stable ids and structured
 answers so it can be packaged, in later PRs, as an H5P Question Set, a SCORM 1.2
@@ -51,6 +51,16 @@ threshold, and score bands — rides along, and LaTeX renders through H5P's
 MathDisplay. The emitter is pure Python and writes the ZIP directly; see
 [`docs/adr/0004`](docs/adr/0004-pure-python-h5p-packaging.md). The later modules
 follow.
+
+**Short answers** are the one type a learner writes in their own words. Because a
+packaged quiz runs inside the LMS with no model available, they are marked by a
+**points-based mark scheme** — two to four key points, each detected by exact,
+case-insensitive phrase matching, each phrase quoted from the source. That is
+automated marking of a real assessment instrument, not an essay grader: it does not
+judge reasoning or coherence, so a learner who is correct in entirely different
+words scores zero, and the results screen shows them which points were found and
+the full model answer. The limits and why they are unavoidable are set out in
+[`docs/adr/0006`](docs/adr/0006-short-answer-questions.md).
 
 > **Prerequisite for import:** the target LMS must have the H5P content types
 > installed (in Moodle: *Site administration → H5P → Manage H5P content types*),
