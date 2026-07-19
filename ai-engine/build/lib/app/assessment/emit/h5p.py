@@ -5,14 +5,13 @@ H5P calls it. The format half — versions, manifest, the ZIP — lives in
 `app.packaging.h5p`, so Modules C and D can emit their own H5P content types
 without importing anything from the assessment module.
 
-The four mappings, all against the versions the H5P Hub serves today:
+The three mappings, all against the versions the H5P Hub serves today:
 
-| contract          | H5P library          |
-|-------------------|----------------------|
-| `MCQItem`         | H5P.MultiChoice 1.16 |
-| `FillBlankItem`   | H5P.Blanks 1.14      |
-| `MatchItem`       | H5P.DragText 1.10    |
-| `ShortAnswerItem` | H5P.Essay 1.5        |
+| contract       | H5P library          |
+|----------------|----------------------|
+| `MCQItem`      | H5P.MultiChoice 1.16 |
+| `FillBlankItem`| H5P.Blanks 1.14      |
+| `MatchItem`    | H5P.DragText 1.10    |
 
 `MatchItem` → Drag Text deserves a word, because H5P has no first-class
 match-the-pair type. Drag Text renders a text with `*gaps*` and shuffled
@@ -39,7 +38,6 @@ from typing import NamedTuple
 from ...packaging.h5p import (
     BLANKS,
     DRAGTEXT,
-    ESSAY,
     MULTICHOICE,
     build_manifest,
     write_h5p,
@@ -52,7 +50,6 @@ from ..schema import (
     MCQItem,
     Question,
     ScoreBand,
-    ShortAnswerItem,
     default_score_bands,
 )
 from .errors import EmptyAssessmentError
@@ -178,8 +175,6 @@ def _typeset_surfaces(question: Question) -> list[str]:
             *(source.text for source in question.sources),
             *(target.text for target in question.targets),
         ]
-    if isinstance(question, ShortAnswerItem):
-        return [question.prompt, question.model_answer]
     return []
 
 
@@ -187,12 +182,6 @@ def _latex_problem(question: Question) -> str | None:
     """Why this question's maths would not render, or None if it is fine."""
     if not question.has_latex:
         return None
-    if isinstance(question, ShortAnswerItem):
-        # The learner answers a short-answer question in a plain textarea. There is
-        # no markup for MathDisplay to typeset and no way to type LaTeX into it, so
-        # a maths question here has no sensible form on the H5P path. It still ships
-        # in the SCORM package, where the source renders as written.
-        return "it needs LaTeX, which H5P's plain-text answer box cannot render"
     for text in _typeset_surfaces(question):
         if not _latex_is_single_line(text):
             return "its LaTeX spans multiple lines, which H5P's MathDisplay does not render"
@@ -387,81 +376,6 @@ def _dragtext_fields(item: MatchItem) -> tuple[str, str]:
     return "\n".join(lines), " ".join(distractors)
 
 
-def _essay_params(item: ShortAnswerItem) -> dict[str, object]:
-    """Params for H5P.Essay — the only open-response type a Question Set accepts.
-
-    Essay's own matcher is the algorithm our grader ports, so the same answer scores
-    the same in both packages. The rest of this is about not tripping over defaults
-    that only ever get applied by H5P's editor, which a machine-written content.json
-    never passes through.
-    """
-    # The mark scheme, spelled out. Without this the H5P package would mark an
-    # answer and tell the learner nothing about why — the disclosure ADR-0006
-    # promises would exist only in the SCORM player. Essay has no slot for a named
-    # criterion, so each key point's text becomes its own hit/miss feedback and the
-    # whole scheme is listed above the sample answer.
-    scheme = "".join(f"<li>{_escape(point.text)}</li>" for point in item.key_points)
-    return {
-        "taskDescription": _paragraph(item.prompt),
-        "placeholderText": "Answer in two or three sentences, in your own words.",
-        "solution": {
-            "introduction": f"<p>A complete answer makes these points:</p>\n<ul>{scheme}</ul>\n",
-            "sample": _paragraph(item.model_answer),
-        },
-        "keywords": [
-            {
-                "keyword": _escape(point.accepted[0]),
-                "alternatives": [_escape(form) for form in point.accepted[1:]],
-                # `options` must be COMPLETE. essay.js reads `alternativeGroup.options`
-                # with no `|| {}` guard and then dereferences `.points` and
-                # `.occurrences` — so a missing group is a TypeError that takes the
-                # whole activity down, and a missing `points` makes the score NaN.
-                "options": {
-                    "points": point.weight,
-                    "occurrences": 1,
-                    # H5P defaults this to true. For free text that is plainly wrong:
-                    # a learner should not lose a mark for a lower-case sentence start.
-                    "caseSensitive": False,
-                    # Fuzzy matching is off deliberately — porting its sliding
-                    # Levenshtein window bit-exactly into our SCORM player is the kind
-                    # of near-miss that would silently score the same answer
-                    # differently in the two packages. Recall comes from `accepted`.
-                    "forgiveMistakes": False,
-                    # Falls back to the criterion itself, so the learner always
-                    # learns which point they made or missed even when the model
-                    # supplied no feedback of its own.
-                    "feedbackIncluded": _escape(point.feedback_hit or point.text),
-                    "feedbackMissed": _escape(point.feedback_miss or point.text),
-                    # Both are selects; "none" keeps the learner-facing wording ours
-                    # and stops a missed-point message printing the answer it wanted.
-                    "feedbackIncludedWord": "none",
-                    "feedbackMissedWord": "none",
-                },
-            }
-            for point in item.key_points
-        ],
-        "overallFeedback": _explanation_feedback(item.explanation),
-        "behaviour": {
-            "minimumLength": item.min_chars,
-            "maximumLength": item.max_chars,
-            # A select over the STRINGS "1" | "3" | "10", not a number.
-            "inputFieldSize": "10",
-            "enableRetry": True,
-            "ignoreScoring": False,
-            # Emitted explicitly: omitted, essay.js computes `undefined * scoreMax / 100
-            # || 0` -> 0, so every submission including an empty one reports as passed.
-            "percentagePassing": 100,
-            # percentageMastering is deliberately ABSENT. Essay reads
-            # `percentageMastering === undefined ? scoreMax : pct * scoreMax / 100`, so
-            # omitting it makes the denominator exactly the sum of our weights; any
-            # value below 100 would LOWER the max score rather than raise a threshold.
-            "overrideCaseSensitive": "off",
-            "overrideForgiveMistakes": "off",
-            "linebreakReplacement": " ",
-        },
-    }
-
-
 def _dragtext_params(item: MatchItem, text_field: str, distractors: str) -> dict[str, object]:
     params: dict[str, object] = {
         "taskDescription": _paragraph(item.prompt),
@@ -495,11 +409,6 @@ def _implied_points(question: Question) -> int:
         return len(question.blanks)
     if isinstance(question, MatchItem):
         return len(question.sources)
-    if isinstance(question, ShortAnswerItem):
-        # The one type where H5P's scale and ours agree by construction: Essay scores
-        # out of the summed keyword points, and the contract pins `points` to exactly
-        # that sum. So a short answer never contributes to the scale warning below.
-        return sum(point.weight for point in question.key_points)
     return 1
 
 
@@ -551,20 +460,7 @@ def _build(question: Question, assessment_id: str) -> dict[str, object] | None:
             question_id=question.id,
         )
 
-    if isinstance(question, ShortAnswerItem):
-        return wrap(
-            library=ESSAY,
-            params=_essay_params(question),
-            content_type="Essay",
-            title=question.id,
-            assessment_id=assessment_id,
-            question_id=question.id,
-        )
-
-    # A question type nobody taught this emitter about. Saying so beats returning
-    # None, which would drop it from the package without a word — the exact silent
-    # failure this module is written against.
-    raise _Unrenderable(f"{question.type} is not a type the H5P emitter can package")
+    return None
 
 
 def _question_set(assessment: AssessmentSet, questions: list[dict[str, object]]) -> dict[str, object]:

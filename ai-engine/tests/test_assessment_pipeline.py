@@ -14,6 +14,7 @@ import httpx
 import pytest
 
 from app.assessment.pipeline import (
+    _SPARE_QUESTIONS,
     _build_sections,
     _has_latex,
     _is_grounded,
@@ -544,10 +545,13 @@ def test_count_is_clamped_in_the_pipeline():
         seen["n"] = int(re.search(r"up to (\d+)", user).group(1))
         return _reply([])
 
+    # The prompt asks for the clamped count plus a few spares: the grounding gate
+    # rejects some of what comes back, so asking for exactly `count` would leave the
+    # caller short. What the caller receives is still capped at the clamped count.
     _run(_lesson(), handler, types=("mcq",), count=0)
-    assert seen["n"] == 1  # clamped up to the floor
+    assert seen["n"] == 1 + _SPARE_QUESTIONS  # clamped up to the floor
     _run(_lesson(), handler, types=("mcq",), count=100)
-    assert seen["n"] == 20  # clamped down to _MAX_PER_TYPE
+    assert seen["n"] == 20 + _SPARE_QUESTIONS  # clamped down to _MAX_PER_TYPE
 
 
 def test_has_latex_and_optional_fields_pass_through():
@@ -753,3 +757,52 @@ def test_more_than_four_key_points_are_truncated_rather_than_refused():
 
     assert len(result.questions[0].key_points) == 4
     assert result.questions[0].points == pytest.approx(4.0)
+
+
+def test_a_mark_scheme_made_of_stopwords_is_refused():
+    # The worst failure this instrument can have. "the" grounds trivially (every
+    # document contains it), satisfies the model-answer self-check trivially, and
+    # would then award full marks to "I don't know, sorry about that." A phrase has
+    # to be specific enough that containing it means something.
+    payload = _valid_short()
+    payload["key_points"] = [
+        {"text": "Something", "accepted": ["the"]},
+        {"text": "Other", "accepted": ["from"]},
+    ]
+    result = _run(_lesson(), _short_answer_handler(payload), types=("short_answer",))
+
+    assert result.questions == []
+    assert any("mark scheme" in w for w in result.warnings)
+
+
+def test_a_phrase_that_is_in_the_source_but_could_never_match_is_dropped():
+    # Grounding used to be a plain substring test while marking is word-isolated, so
+    # a phrase could be "in the source" and still be unearnable — a mark nobody
+    # could ever get. "make food from" occurs, but "ake food fro" only occurs inside
+    # other words.
+    payload = _valid_short()
+    payload["key_points"][0]["accepted"] = ["from light", "ake food fro"]
+    result = _run(_lesson(), _short_answer_handler(payload), types=("short_answer",))
+
+    assert result.questions[0].key_points[0].accepted == ["from light"]
+
+
+def test_the_caller_never_receives_more_questions_than_they_asked_for():
+    # The spares exist so the gate has something to reject, not so the caller gets
+    # extras when nothing is rejected.
+    def handler(req):
+        return _reply([
+            {
+                "source_section": 1,
+                "evidence": _EVIDENCE,
+                "prompt": f"Question {i}?",
+                "options": [
+                    {"text": f"Right {i}", "is_correct": True},
+                    {"text": f"Wrong {i}", "is_correct": False},
+                ],
+            }
+            for i in range(10)
+        ])
+
+    result = _run(_lesson(), handler, types=("mcq",), count=2)
+    assert result.counts == {"mcq": 2}

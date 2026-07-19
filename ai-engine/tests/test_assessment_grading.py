@@ -43,8 +43,9 @@ def _item(**overrides) -> ShortAnswerItem:
 
 # --- the marking table -------------------------------------------------------
 #
-# Every row here was also run through H5P.Essay's own algorithm in a browser, and
-# all eight agreed. See work-docs/proof/week-07-short-answer/.
+# These pin the behaviour a reader needs to understand. Agreement with H5P's own
+# algorithm is a separate, stronger property, tested over a wider corpus in
+# tests/test_grader_parity.py against a checked-in transcription of essay.js.
 
 @pytest.mark.parametrize(
     ("answer", "expected"),
@@ -147,3 +148,23 @@ def test_a_full_answer_scores_exactly_the_questions_points():
     # getMaxScore() and our SCORM denominator — one number, three consumers.
     item = _item()
     assert score_short_answer(item, item.model_answer) == pytest.approx(item.points)
+
+
+# --- the H5P quirks we must reproduce, not tidy up ---------------------------
+
+
+def test_a_whitespace_pair_of_any_kind_collapses_the_way_h5p_collapses_it():
+    # H5P's pass is /\s\s/, not two literal spaces, so a tab pair collapses too.
+    # Matching on " {2}" would silently disagree on text pasted from a word
+    # processor — and the parity test proves that divergence is real.
+    assert normalise("a\t\tb") == "a b"
+    assert normalise("a  b") == "a b"
+
+
+def test_a_phrase_can_match_where_no_position_in_the_original_string_is_isolated():
+    # H5P consumes the haystack rather than advancing a cursor, so the start of each
+    # remainder counts as a word boundary. In "land heatsland heats" no occurrence is
+    # isolated in the original string, but the remainder after the first is.
+    # Scanning with an advancing cursor would find nothing — a real divergence.
+    point = KeyPoint(id="k", text="t", accepted=["land heats"])
+    assert point_is_made(point, "land heatsland heats")

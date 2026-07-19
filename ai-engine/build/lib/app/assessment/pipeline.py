@@ -38,26 +38,23 @@ from ..ingestion.schema import Block, BlockKind, Page, ParsedDocument
 from ..summarization.llm_client import LLMBadResponse, chat_json
 from ..summarization.pipeline import EmptyDocumentError, GenerationConfig
 from . import prompts
-from .grading import normalise, point_is_made, score_short_answer
 from .schema import (
     AssessmentSet,
     AssessmentSource,
     Blank,
     Choice,
     FillBlankItem,
-    KeyPoint,
     MatchItem,
     MatchSource,
     MatchTarget,
     MCQItem,
     Question,
-    ShortAnswerItem,
 )
 
 logger = logging.getLogger("ai_engine.assessment")
 
-QuestionType = Literal["mcq", "match", "fill_blank", "short_answer"]
-ALL_TYPES: tuple[QuestionType, ...] = ("mcq", "match", "fill_blank", "short_answer")
+QuestionType = Literal["mcq", "match", "fill_blank"]
+ALL_TYPES: tuple[QuestionType, ...] = ("mcq", "match", "fill_blank")
 
 # Bound the work so a huge document cannot produce an unbounded prompt or an
 # unbounded number of generations.
@@ -66,9 +63,6 @@ _MAX_PER_TYPE = 20
 # An evidence quote shorter than this (after normalising) is too weak to trust as
 # grounding, so the question is dropped.
 _MIN_EVIDENCE_CHARS = 8
-# How many extra questions to ask the model for, per type, so the grounding gate
-# has something to reject without leaving the caller short.
-_SPARE_QUESTIONS = 3
 
 _WHITESPACE = re.compile(r"\s+")
 _LATEX_MARKERS = ("\\(", "\\[", "$$")
@@ -227,13 +221,6 @@ class _BlankOut(BaseModel):
     tip: str | None = None
 
 
-class _KeyPointOut(BaseModel):
-    text: str = ""
-    accepted: list[str] = Field(default_factory=list, validation_alias=AliasChoices("accepted", "phrases"))
-    feedback_hit: str | None = None
-    feedback_miss: str | None = None
-
-
 class _QuestionOut(BaseModel):
     """The union of fields any question type may return; unused ones stay empty."""
 
@@ -256,13 +243,6 @@ class _QuestionOut(BaseModel):
     text: str = Field(default="", validation_alias=AliasChoices("text", "sentence"))
     blanks: list[_BlankOut] = Field(
         default_factory=list, validation_alias=AliasChoices("blanks", "gaps")
-    )
-    # short answer
-    key_points: list[_KeyPointOut] = Field(
-        default_factory=list, validation_alias=AliasChoices("key_points", "keyPoints", "points")
-    )
-    model_answer: str = Field(
-        default="", validation_alias=AliasChoices("model_answer", "modelAnswer", "sample_answer")
     )
 
     @field_validator("distractors", mode="before")
@@ -411,118 +391,6 @@ def _assemble_fill_blank(
         return None
 
 
-#: A key point's phrase has to be specific enough that containing it means
-#: something. Without a floor the model can offer "the" — which grounds trivially
-#: (every document contains it), satisfies the model-answer self-check trivially,
-#: and then awards full marks to "I don't know, sorry about that." The prompt asks
-#: for three to six words, but a prompt is a request and this is the guarantee.
-#: Two words is the minimum that can carry a claim; the character floor matches
-#: the one `_MIN_EVIDENCE_CHARS` already puts on quoted evidence.
-_MIN_ACCEPTED_WORDS = 2
-_MIN_ACCEPTED_CHARS = 8
-
-
-def _occurs(form: str, source: str) -> bool:
-    """Whether a phrase would actually match if a learner wrote this source text."""
-    return point_is_made(KeyPoint(id="probe", text="probe", accepted=[form]), source)
-
-
-def _matchable(form: str) -> bool:
-    """Whether a phrase is safe to match on, and specific enough to be worth a mark."""
-    cleaned = form.strip()
-    if not cleaned or "*" in cleaned or len(cleaned) > 60:
-        return False
-    if cleaned.startswith("/") and cleaned.endswith("/"):
-        return False
-    if len(cleaned) < _MIN_ACCEPTED_CHARS or len(cleaned.split()) < _MIN_ACCEPTED_WORDS:
-        return False
-    # A phrase whose own normalisation changes it could never be matched: the
-    # learner's text is normalised before the search, so an embedded newline or
-    # double space makes the needle unfindable.
-    return normalise(cleaned) == cleaned.lower()
-
-
-def _grounded_key_points(
-    raw: list[_KeyPointOut], qid: str, answer_sources: list[str]
-) -> list[KeyPoint]:
-    """Build the mark scheme, keeping only phrases the source actually contains.
-
-    A mark scheme is an answer key, so it gets the same treatment the fill-in-the-blank
-    answers get: an invented phrase would award — or withhold — a mark for wording the
-    tenant's material never used. Phrases are dropped silently and a key point that
-    loses all of them is dropped with it; the caller warns if too few survive.
-    """
-    points: list[KeyPoint] = []
-    for i, item in enumerate(raw, start=1):
-        text = _clean(item.text)
-        candidates = _grounded_answers([f for f in item.accepted if _matchable(f)], answer_sources)
-        # Ground with the SAME matcher that marks. `_contains` is a plain substring
-        # test, so a phrase can be "in the source" and still be unmarkable — a mark
-        # nobody could ever earn. Checking it against the source the way a learner's
-        # answer will be checked keeps the scheme achievable.
-        forms = [f for f in candidates if any(_occurs(f, h) for h in answer_sources)]
-        if not text or not forms:
-            continue
-        points.append(
-            KeyPoint(
-                id=f"{qid}-k{i}",
-                text=text,
-                accepted=forms[:6],
-                # The model never proposes marks. One mark per point keeps the
-                # points/marks ratio at exactly one and the max score integral.
-                weight=1,
-                feedback_hit=(_clean(item.feedback_hit or "") or None),
-                feedback_miss=(_clean(item.feedback_miss or "") or None),
-            )
-        )
-    return points
-
-
-def _assemble_short_answer(
-    out: _QuestionOut, qid: str, source_index: int | None, haystacks: list[str], warnings: list[str]
-) -> ShortAnswerItem | None:
-    prompt = _clean(out.prompt)
-    model_answer = _clean(out.model_answer)
-    if not prompt or not model_answer or not _is_grounded(out.evidence, haystacks):
-        warnings.append("Dropped a short-answer question that was empty or not grounded in the source.")
-        return None
-
-    answer_sources = [_normalise(out.evidence), *haystacks]
-    key_points = _grounded_key_points(out.key_points, qid, answer_sources)[:4]
-    if len(key_points) < 2:
-        warnings.append("Dropped a short-answer question whose mark scheme was not grounded in the source.")
-        return None
-
-    try:
-        item = ShortAnswerItem(
-            id=qid,
-            source_index=source_index,
-            prompt=prompt,
-            key_points=key_points,
-            model_answer=model_answer,
-            points=float(sum(k.weight for k in key_points)),
-            explanation=(out.explanation or None),
-            # A deterrent against answering with the bare key phrases. It raises the
-            # cost of stuffing; it cannot detect it, and we do not pretend otherwise.
-            min_chars=min(120, len(model_answer) // 2),
-            max_chars=max(400, len(model_answer) * 3),
-            has_latex=_has_latex(prompt, model_answer),
-        )
-    except ValidationError:
-        warnings.append("Dropped a malformed short-answer question.")
-        return None
-
-    # The mark scheme has to be satisfiable by the answer it ships with. If the model
-    # answer does not itself make every point it demands, the scheme is incoherent —
-    # and a learner who wrote exactly that answer would be marked down.
-    if score_short_answer(item, model_answer) < item.points:
-        warnings.append(
-            "Dropped a short-answer question whose model answer did not make its own key points."
-        )
-        return None
-    return item
-
-
 @dataclass(frozen=True)
 class _TypeSpec:
     prompt: Callable[[list[tuple[int, str | None, str]], int], str]
@@ -533,7 +401,6 @@ _SPECS: dict[QuestionType, _TypeSpec] = {
     "mcq": _TypeSpec(prompts.mcq_prompt, _assemble_mcq),
     "match": _TypeSpec(prompts.match_prompt, _assemble_match),
     "fill_blank": _TypeSpec(prompts.fill_blank_prompt, _assemble_fill_blank),
-    "short_answer": _TypeSpec(prompts.short_answer_prompt, _assemble_short_answer),
 }
 
 
@@ -562,7 +429,7 @@ async def _generate_type(
             api_key=config.api_key,
             model=config.model,
             system=prompts.SYSTEM,
-            user=_SPECS[qtype].prompt(numbered, count + _SPARE_QUESTIONS),
+            user=_SPECS[qtype].prompt(numbered, count),
             temperature=config.temperature,
         )
     except LLMBadResponse as exc:
@@ -577,12 +444,8 @@ async def _generate_type(
         warnings.append(f"Could not generate {qtype} questions: the response had no question list.")
         return []
 
-    # Deliberately not truncated to `count` here. The grounding gate downstream
-    # rejects some of what the model returns — that is its job — so the caller asks
-    # for a few extra and keeps the first `count` that survive. Truncating before
-    # the gate would throw away the spares that make up for the rejections.
     parsed: list[_QuestionOut] = []
-    for item in raw_items[: count + _SPARE_QUESTIONS]:
+    for item in raw_items[:count]:  # never assemble more than were asked for
         try:
             parsed.append(_QuestionOut.model_validate(item))
         except ValidationError:
@@ -621,10 +484,7 @@ async def generate_assessment(
     counter = 1
     for qtype in question_types:
         items = await _generate_type(client, config, qtype, numbered, per_type, warnings)
-        kept_of_type = 0
         for out in items:
-            if kept_of_type >= per_type:
-                break
             evidence_norm = _normalise(out.evidence)
             # Grounding is checked against the whole document; attribution finds
             # the specific page the evidence came from (the model's claimed
@@ -634,7 +494,6 @@ async def generate_assessment(
             item = _SPECS[qtype].assemble(out, qid, source_index, [norm_all], warnings)
             if item is not None:
                 questions.append(item)
-                kept_of_type += 1
                 counter += 1
 
     return AssessmentSet(

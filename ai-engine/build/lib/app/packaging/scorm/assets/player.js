@@ -102,81 +102,10 @@
     return question.blanks.length ? (question.points * got) / question.blanks.length : 0;
   }
 
-  // --- short answer ---------------------------------------------------------
-  //
-  // A port of H5P.Essay's matcher, so the same text scores the same mark whether
-  // the tenant imported the H5P package or this one. Two details are copied
-  // deliberately, including one that is arguably a bug:
-  //
-  //   * the double-space replace is a single non-overlapping pass, so it HALVES
-  //     runs of whitespace rather than collapsing them ("a    b" -> "a  b").
-  //     Writing /\s+/ here would be tidier and would silently disagree with H5P.
-  //   * a match only counts when word-isolated, which is what stops
-  //     "grassland heats up" from matching the key point "land heats".
-
-  var WORD_DELIMITER = /[\s.?!,';"]/;
-
-  function essayNormalise(text) {
-    return String(text == null ? "" : text)
-      .replace(/(\r\n|\r|\n)/g, " ")
-      // \s\s, not two literal spaces: H5P collapses any whitespace pair, so a tab
-      // or non-breaking-space pair collapses there too. Matching on " {2}" would
-      // silently disagree on text pasted from a word processor.
-      .replace(/\s\s/g, " ")
-      .toLowerCase();
-  }
-
-  function isIsolated(needle, hay, pos) {
-    var before = pos === 0 ? "" : hay.charAt(pos - 1).replace(WORD_DELIMITER, "");
-    var end = pos + needle.length;
-    var after = end === hay.length ? "" : hay.charAt(end).replace(WORD_DELIMITER, "");
-    return before === "" && after === "";
-  }
-
-  // Searches the way Essay.detectExactMatches does — by CONSUMING the haystack
-  // rather than advancing a cursor. The difference is observable: the start of
-  // each remainder counts as a word boundary, so "moremore" matches the needle
-  // "more" even though no position in the original string is isolated.
-  function occursIsolated(needle, hay) {
-    var remaining = hay;
-    for (;;) {
-      var pos = remaining.indexOf(needle);
-      if (pos === -1) return false;
-      if (isIsolated(needle, remaining, pos)) return true;
-      remaining = remaining.slice(pos + needle.length);
-    }
-  }
-
-  function pointIsMade(point, answer) {
-    if (!point) return false;
-    var hay = essayNormalise(answer);
-    return point.accepted.some(function (form) {
-      var needle = String(form).trim().toLowerCase();
-      return needle !== "" && occursIsolated(needle, hay);
-    });
-  }
-
-  function keyPointById(question, id) {
-    var found = null;
-    (question.key_points || []).forEach(function (p) {
-      if (p.id === id) found = p;
-    });
-    return found;
-  }
-
-  function gradeShortAnswer(question, answer) {
-    var got = 0;
-    (question.key_points || []).forEach(function (point) {
-      if (pointIsMade(point, answer)) got += point.weight;
-    });
-    return got; // the weights sum to question.points, by contract
-  }
-
   function grade(question) {
     var answer = responses[question.id];
     if (question.type === "mcq") return gradeMcq(question, answer);
     if (question.type === "match") return gradeMatch(question, answer);
-    if (question.type === "short_answer") return gradeShortAnswer(question, answer);
     return gradeBlanks(question, answer);
   }
 
@@ -258,34 +187,6 @@
     into.appendChild(wrap);
   }
 
-  function renderShortAnswer(question, into) {
-    responses[question.id] = "";
-    var area = document.createElement("textarea");
-    area.className = "short-answer";
-    area.rows = 6;
-    area.maxLength = question.max_chars;
-    area.placeholder = "Answer in two or three sentences, in your own words.";
-    var note = el("p", "answer-note", "");
-    note.setAttribute("data-note-for", question.id);
-    function updateNote() {
-      var length = area.value.trim().length;
-      if (question.min_chars > 0 && length < question.min_chars) {
-        note.textContent = "At least " + question.min_chars + " characters (" + length + " so far).";
-        note.className = "answer-note short";
-      } else {
-        note.textContent = length + " of " + question.max_chars + " characters.";
-        note.className = "answer-note";
-      }
-    }
-    area.addEventListener("input", function () {
-      responses[question.id] = area.value;
-      updateNote();
-    });
-    updateNote();
-    into.appendChild(area);
-    into.appendChild(note);
-  }
-
   function render() {
     var root = document.getElementById("quiz");
     data.questions.forEach(function (question, index) {
@@ -300,7 +201,6 @@
       var body = el("div", "body");
       if (question.type === "mcq") renderMcq(question, body);
       else if (question.type === "match") renderMatch(question, body);
-      else if (question.type === "short_answer") renderShortAnswer(question, body);
       else renderBlanks(question, body);
       card.appendChild(body);
       root.appendChild(card);
@@ -329,29 +229,6 @@
     out.appendChild(el("p", passed ? "verdict pass" : "verdict fail", passed ? "Passed" : "Not passed"));
     var band = bandFor(pct);
     if (band) out.appendChild(el("p", "band", band));
-
-    // A short answer is marked by looking for specific phrases, so the learner is
-    // shown exactly which points were found and what a complete answer looks like.
-    // Marking that a learner cannot inspect is not marking they can learn from —
-    // and this is also where someone who was right in different words can see why
-    // they scored what they did.
-    data.questions.forEach(function (question, index) {
-      if (question.type !== "short_answer") return;
-      var box = el("div", "mark-scheme");
-      box.appendChild(el("h3", null, "Question " + (index + 1) + " — how this was marked"));
-      var list = el("ul", null);
-      question.key_points.forEach(function (point) {
-        var made = pointIsMade(point, responses[question.id]);
-        var row = el("li", made ? "point made" : "point missed", point.text);
-        var hint = made ? point.feedback_hit : point.feedback_miss;
-        if (hint) row.appendChild(el("span", "hint", " — " + hint));
-        list.appendChild(row);
-      });
-      box.appendChild(list);
-      box.appendChild(el("p", "model-answer-label", "A complete answer:"));
-      box.appendChild(el("p", "model-answer", question.model_answer));
-      out.appendChild(box);
-    });
 
     data.questions.forEach(function (question, index) {
       if (!question.explanation) return;
@@ -395,23 +272,6 @@
         })
         .join(",");
     }
-    if (question.type === "short_answer") {
-      // The matched phrase, not the learner's prose: it is the evidence that earned
-      // the mark, and it is capped at 60 characters by the contract so it can never
-      // overflow CMIString255. The prose itself goes to cmi.comments.
-      var point = keyPointById(question, interaction.id);
-      if (!point) return "";
-      var hay = essayNormalise(answer);
-      var matched = "";
-      point.accepted.forEach(function (form) {
-        if (matched) return;
-        var needle = String(form).trim().toLowerCase();
-        // Same search the grader used, so the reported evidence can never
-        // disagree with the mark it was awarded for.
-        if (needle !== "" && occursIsolated(needle, hay)) matched = form;
-      });
-      return matched;
-    }
     return String((answer || {})[interaction.id] || "");
   }
 
@@ -432,17 +292,10 @@
         });
         var given = learnerResponse(question, interaction);
         scorm.set(base + "student_response", given);
-        // Dispatch on the QUESTION type, never the interaction type. A short answer
-        // also reports as "fill-in", so keying off that would route it into
-        // blankIsCorrect, hit `question.blanks` on a question that has none, and
-        // throw — losing the whole report while the quiz still rendered and still
-        // showed a score.
         var correct =
-          question.type === "fill_blank"
+          interaction.type === "fill-in"
             ? blankIsCorrect(question, interaction.id)
-            : question.type === "short_answer"
-              ? pointIsMade(keyPointById(question, interaction.id), responses[question.id])
-              : scored >= question.points;
+            : scored >= question.points;
         // We graded it, so we say so — SCORM 1.2's fill-in pattern cannot carry
         // case-sensitivity (that is 2004's {case_matters=}), and .result is where
         // our verdict actually lives.
@@ -470,57 +323,8 @@
     );
   }
 
-  // The learner's own words, for provenance. cmi.interactions carries only the
-  // matched phrases, so without this a teacher could never see what was actually
-  // written. cmi.comments is a single CMIString4096 rather than an array, so this
-  // accumulates and writes once; an LMS that refuses the optional element just
-  // records nothing, and Scorm.set logs it without throwing.
-  function reportTranscript() {
-    var written = data.questions
-      .filter(function (q) {
-        return q.type === "short_answer" && String(responses[q.id] || "").trim() !== "";
-      })
-      .map(function (q) {
-        return q.id + ": " + responses[q.id];
-      })
-      .join("\n");
-    if (!written) return;
-    if (written.length > 4096) {
-      var cut = 4093;
-      // Never slice between a surrogate pair — that would send a lone surrogate to
-      // the LMS. Relevant for emoji and for scripts outside the BMP.
-      if (/[\uD800-\uDBFF]/.test(written.charAt(cut - 1))) cut -= 1;
-      written = written.slice(0, cut) + "...";
-    }
-    scorm.set("cmi.comments", written);
-  }
-
-  // H5P.Essay refuses to submit an answer below behaviour.minimumLength, so this
-  // does too — otherwise the same quiz would accept in one package what it rejects
-  // in the other.
-  function tooShort() {
-    var offenders = data.questions.filter(function (q) {
-      if (q.type !== "short_answer" || !q.min_chars) return false;
-      return String(responses[q.id] || "").trim().length < q.min_chars;
-    });
-    return offenders.length ? offenders[0] : null;
-  }
-
   function submit() {
     if (finished) return;
-
-    var short = tooShort();
-    if (short) {
-      var note = document.querySelector('[data-note-for="' + short.id + '"]');
-      if (note) {
-        note.className = "answer-note short";
-        note.textContent =
-          "Please write at least " + short.min_chars + " characters before submitting.";
-        note.scrollIntoView({ block: "center" });
-      }
-      return;
-    }
-
     finished = true;
 
     var earned = 0;
@@ -532,7 +336,6 @@
 
     if (scorm.connected) {
       reportInteractions();
-      reportTranscript();
       scorm.set("cmi.core.score.min", "0");
       scorm.set("cmi.core.score.max", "100");
       // Normalised 0-100. This is normative in SCORM 1.2, not a convention:
@@ -543,12 +346,6 @@
       scorm.set("cmi.core.session_time", timespan((Date.now() - launchedAt) / 1000));
       scorm.set("cmi.core.exit", ""); // "" IS a normal exit; "normal" is invalid
       scorm.finish();
-    } else if (scorm.available()) {
-      // We found an API at boot but cannot write now — the session ended under us.
-      // Say so rather than showing a clean score the LMS never received.
-      var banner = document.getElementById("banner");
-      banner.hidden = false;
-      banner.textContent = "The connection to the LMS has ended — this result was not saved.";
     }
 
     showResults(earned, pct, passed);
@@ -575,19 +372,8 @@
     banner.textContent = "Not connected to an LMS — your results will not be saved.";
   }
 
-  window.addEventListener("pagehide", function (event) {
+  window.addEventListener("pagehide", function () {
     if (finished || !scorm.connected) return;
-    // A pagehide with persisted:true means the page went into the back/forward
-    // cache, not that the learner left — and it WILL come back, with all script
-    // state intact. Finishing here would latch the session closed, so the learner
-    // could return, finish their answer, press Submit, and have every CMI write
-    // silently refused while the results screen still congratulated them. Commit
-    // what we have and stay connected.
-    if (event && event.persisted) {
-      scorm.set("cmi.core.session_time", timespan((Date.now() - launchedAt) / 1000));
-      scorm.commit();
-      return;
-    }
     scorm.set("cmi.core.exit", "suspend");
     scorm.set("cmi.core.session_time", timespan((Date.now() - launchedAt) / 1000));
     scorm.finish();

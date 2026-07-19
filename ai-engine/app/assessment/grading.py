@@ -4,8 +4,10 @@ This is a faithful port of the matcher inside ``H5P.Essay 1.5.13`` — the versi
 the H5P Hub serves — and it exists in three places by necessity: here, in the
 SCORM player's JavaScript, and in H5P's own library. All three must award the same
 mark for the same text, or one learner gets a different result depending on which
-package their LMS imported. The parity test in ``tests/test_assessment_grading.py``
-is what holds them together.
+package their LMS imported. ``tests/test_grader_parity.py`` is what holds them
+together: it drives a corpus through this module, through the matcher the shipped
+player actually contains, and through a checked-in transcription of ``essay.js``,
+and requires all three to agree.
 
 Two details are reproduced *exactly*, including one that is arguably a bug:
 
@@ -30,6 +32,13 @@ import re
 from .schema import KeyPoint, ShortAnswerItem
 
 #: ``H5P.TextUtilities.isIsolated``'s word delimiters, verbatim.
+#:
+#: Worth knowing: this set is Latin-centric and does not include the Devanagari
+#: danda (``।``) or the CJK terminators, so a Hindi answer ending a phrase at a
+#: danda is not isolated and does not match. That is a real limitation for Indic
+#: content — but it is H5P's, and adding characters here would make our two
+#: packages mark the same answer differently, which is worse than a limitation
+#: they share. Recorded in ADR-0006 rather than silently patched.
 _WORD_DELIMITER = re.compile(r"[\s.?!,';\"]")
 
 #: ``Essay.prototype.getInput``: newlines become spaces before anything else. The
@@ -37,16 +46,21 @@ _WORD_DELIMITER = re.compile(r"[\s.?!,';\"]")
 #: emit.
 _NEWLINES = re.compile(r"(\r\n|\r|\n)")
 
+#: H5P collapses ``\s\s``, not two literal spaces — so a tab pair or a
+#: non-breaking-space pair collapses there too. Using ``"  "`` here would silently
+#: disagree on any answer pasted from a word processor.
+_DOUBLE_WHITESPACE = re.compile(r"\s\s")
+
 
 def normalise(text: str) -> str:
     r"""Normalise learner text exactly as ``Essay.prototype.getInput`` does.
 
-    The double-space replacement is deliberately not ``\s+``: H5P's is a single
+    The whitespace replacement is deliberately not ``\s+``: H5P's is a single
     non-overlapping pass, so four spaces become two rather than one. Matching that
     quirk is the difference between the two packages agreeing and disagreeing.
     """
     collapsed = _NEWLINES.sub(" ", text or "")
-    return collapsed.replace("  ", " ").lower()
+    return _DOUBLE_WHITESPACE.sub(" ", collapsed).lower()
 
 
 def _is_isolated(needle: str, haystack: str, position: int) -> bool:
@@ -57,18 +71,35 @@ def _is_isolated(needle: str, haystack: str, position: int) -> bool:
     return before == "" and after == ""
 
 
+def _occurs_isolated(needle: str, haystack: str) -> bool:
+    """Search the way ``Essay.detectExactMatches`` does — by consuming the haystack.
+
+    H5P does not advance a cursor; it *truncates* the string after each occurrence
+    and searches the remainder. That has an observable consequence worth preserving:
+    the start of each remainder counts as a word boundary. So in ``"moremore"`` the
+    needle ``"more"`` fails isolation at position 0 (the next character is a letter),
+    but the remaining ``"more"`` then matches, because its position 0 has nothing
+    before it. Scanning the original string with an advancing cursor would find no
+    match at all — a divergence that would score the same answer differently in the
+    two packages.
+    """
+    remaining = haystack
+    while True:
+        position = remaining.find(needle)
+        if position == -1:
+            return False
+        if _is_isolated(needle, remaining, position):
+            return True
+        remaining = remaining[position + len(needle) :]
+
+
 def point_is_made(point: KeyPoint, text: str) -> bool:
     """Whether any of a key point's accepted forms appears, word-isolated, in the text."""
     haystack = normalise(text)
     for form in point.accepted:
         needle = form.strip().lower()
-        if not needle:
-            continue
-        start = haystack.find(needle)
-        while start != -1:
-            if _is_isolated(needle, haystack, start):
-                return True
-            start = haystack.find(needle, start + 1)
+        if needle and _occurs_isolated(needle, haystack):
+            return True
     return False
 
 
