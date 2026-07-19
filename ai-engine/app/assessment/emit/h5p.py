@@ -208,6 +208,29 @@ def _latex_problem(question: Question) -> str | None:
 # --- per-type params ---------------------------------------------------------
 
 
+
+def _behaviour(**overrides: object) -> dict[str, object]:
+    """The behaviour flags every question type sets, plus that type's own.
+
+    These are written out rather than left to default because H5P's *semantics*
+    defaults are applied by its editor, and a machine-written ``content.json``
+    never goes through the editor — so an omitted flag falls through to whatever
+    the library's JavaScript happens to use, which is not always the same value.
+    Each type then overrides what it genuinely differs on.
+    """
+    common: dict[str, object] = {
+        "enableRetry": True,
+        "enableSolutionsButton": True,
+        "enableCheckButton": True,
+        "showSolutionsRequiresInput": True,
+        "confirmCheckDialog": False,
+        "confirmRetryDialog": False,
+        "autoCheck": False,
+    }
+    common.update(overrides)
+    return common
+
+
 def _overall_feedback(bands: list[ScoreBand]) -> list[dict[str, object]]:
     """H5P's score-band structure. Flat — `overallFeedback` is the list itself.
 
@@ -260,27 +283,19 @@ def _mcq_params(item: MCQItem) -> dict[str, object]:
             "correctAnswer": "Correct answer",
             "wrongAnswer": "Wrong answer",
         },
-        "behaviour": {
+        "behaviour": _behaviour(
             # `type`, never `singleAnswer` (absent from semantics; multichoice.js
             # derives it from `type` before any read). Never "auto" either: with
             # auto, a multi-answer question that happens to have one correct choice
             # renders as radio buttons, and our contract explicitly allows that.
-            "type": "single" if item.single_answer else "multi",
+            type="single" if item.single_answer else "multi",
             # singlePoint and randomAnswers are emitted explicitly because the JS
-            # defaults contradict the semantics defaults, and a machine-written
-            # content.json bypasses the editor that would have applied semantics.
-            "singlePoint": True,
-            "randomAnswers": True,
-            "enableRetry": True,
-            "enableSolutionsButton": True,
-            "enableCheckButton": True,
-            "showSolutionsRequiresInput": True,
-            "confirmCheckDialog": False,
-            "confirmRetryDialog": False,
-            "autoCheck": False,
-            "passPercentage": 100,
-            "showScorePoints": True,
-        },
+            # defaults contradict the semantics defaults.
+            singlePoint=True,
+            randomAnswers=True,
+            passPercentage=100,
+            showScorePoints=True,
+        ),
     }
 
 
@@ -332,20 +347,13 @@ def _blanks_params(item: FillBlankItem, text: str) -> dict[str, object]:
         "text": _paragraph(item.prompt) if item.prompt else "<p>Fill in the missing words</p>\n",
         "questions": [text],
         "overallFeedback": _explanation_feedback(item.explanation),
-        "behaviour": {
+        "behaviour": _behaviour(
             # H5P defaults caseSensitive to TRUE and our contract defaults it to
             # False, so omitting it would invert the author's intent.
-            "caseSensitive": item.case_sensitive,
-            "enableRetry": True,
-            "enableSolutionsButton": True,
-            "enableCheckButton": True,
-            "autoCheck": False,
-            "separateLines": False,
-            "showSolutionsRequiresInput": True,
-            "acceptSpellingErrors": False,
-            "confirmCheckDialog": False,
-            "confirmRetryDialog": False,
-        },
+            caseSensitive=item.case_sensitive,
+            separateLines=False,
+            acceptSpellingErrors=False,
+        ),
     }
 
 
