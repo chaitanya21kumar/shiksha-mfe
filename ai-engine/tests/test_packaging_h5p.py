@@ -109,16 +109,19 @@ def test_dependency_versions_are_ints_that_satisfy_h5ps_numeric_regex():
         assert H5P_VERSION_RE.match(str(dep["minorVersion"]))
 
 
-def test_closure_is_the_twelve_libraries_read_from_the_hub_package():
+def test_closure_is_the_libraries_read_from_the_hub_packages():
     # Resolved by walking preloadedDependencies through the library.json of every
-    # library inside the Hub's own Question Set download. Notably it does NOT
-    # include H5P.Components, which master's dependency graph implies but the
+    # library inside the Hub's own Question Set and Essay downloads. Notably it does
+    # NOT include H5P.Components, which master's dependency graph implies but the
     # shipped libraries do not use.
     assert set(CLOSURE) == {
         ("H5P.QuestionSet", 1, 20),
         ("H5P.MultiChoice", 1, 16),
         ("H5P.Blanks", 1, 14),
         ("H5P.DragText", 1, 10),
+        # Essay's own dependencies were already here for the other three types, so
+        # it is the only addition its support required.
+        ("H5P.Essay", 1, 5),
         ("H5P.Question", 1, 5),
         ("H5P.JoubelUI", 1, 3),
         ("H5P.Transition", 1, 0),

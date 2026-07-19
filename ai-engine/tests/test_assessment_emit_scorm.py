@@ -28,8 +28,10 @@ from app.assessment.schema import (
     MatchItem,
     MatchSource,
     MatchTarget,
+    KeyPoint,
     MCQItem,
     ScoreBand,
+    ShortAnswerItem,
 )
 
 
@@ -315,3 +317,90 @@ def test_the_filename_is_derived_from_the_source_document():
 def test_the_same_assessment_always_emits_the_same_bytes():
     assessment = _set([_mcq(id="q1"), _match(id="q2"), _blank(id="q3")])
     assert emit_scorm(assessment).content == emit_scorm(assessment).content
+
+
+# --- short answer ------------------------------------------------------------
+
+
+def _short(**overrides) -> ShortAnswerItem:
+    kwargs = {
+        "id": "q1",
+        "prompt": "Explain how a sea breeze forms.",
+        "points": 2.0,
+        "model_answer": "The land heats faster, so wind blows from sea to land.",
+        "key_points": [
+            KeyPoint(id="q1-k1", text="Land warms faster", accepted=["land heats", "land warms"]),
+            KeyPoint(id="q1-k2", text="Air moves inland", accepted=["sea to land"]),
+        ],
+    }
+    kwargs.update(overrides)
+    return ShortAnswerItem(**kwargs)
+
+
+def test_a_short_answer_reports_one_interaction_per_key_point():
+    # Structurally the same choice as fill-in-the-blank, and for the same reason: a
+    # single verdict would tell a teacher only that the answer was wrong, where one
+    # interaction per point shows them WHICH points the learner made.
+    interactions = _interactions(_set([_short()]))
+    assert [i["id"] for i in interactions] == ["q1-k1", "q1-k2"]
+    assert all(i["type"] == "fill-in" for i in interactions)
+
+
+def test_every_accepted_form_becomes_a_correct_response_pattern():
+    assert _interactions(_set([_short()]))[0]["correct_responses"] == ["land heats", "land warms"]
+
+
+def test_a_key_points_weighting_is_its_own_weight():
+    item = _short(
+        points=4.0,
+        key_points=[
+            KeyPoint(id="q1-k1", text="Main", accepted=["land heats"], weight=3),
+            KeyPoint(id="q1-k2", text="Detail", accepted=["sea to land"], weight=1),
+        ],
+    )
+    assert [i["weighting"] for i in _interactions(_set([item]))] == ["3", "1"]
+
+
+def test_no_pattern_can_exceed_the_scorm_string_limit():
+    # The contract caps an accepted form at 60 characters precisely so this is
+    # structurally impossible rather than something the emitter has to police.
+    for interaction in _interactions(_set([_short()])):
+        assert all(len(p) <= 255 for p in interaction["correct_responses"])
+
+
+def test_the_player_gets_the_mark_scheme_and_the_model_answer():
+    # It grades offline, and it shows the learner what a complete answer looks like.
+    payload = _payload(_set([_short()]))["questions"][0]
+    assert [k["id"] for k in payload["key_points"]] == ["q1-k1", "q1-k2"]
+    assert payload["model_answer"]
+    assert payload["max_chars"] >= payload["min_chars"]
+
+
+def test_a_mixed_set_reports_interactions_for_both_fill_in_types():
+    # THE REGRESSION TEST. A short answer also reports as type "fill-in", so a
+    # reporting loop that dispatched on the INTERACTION type would route it into the
+    # fill-in-the-blank handler, hit `question.blanks` on a question that has none,
+    # and throw — losing every interaction while the quiz still rendered and still
+    # showed a score. Dispatch is on the QUESTION type for exactly this reason.
+    assessment = _set([_blank(id="q1"), _short(id="q2", key_points=[
+        KeyPoint(id="q2-k1", text="A", accepted=["land heats"]),
+        KeyPoint(id="q2-k2", text="B", accepted=["sea to land"]),
+    ])])
+    interactions = _interactions(assessment)
+    assert [i["id"] for i in interactions] == ["q1-b1", "q2-k1", "q2-k2"]
+
+
+def test_a_short_answer_needing_latex_is_kept_rather_than_dropped():
+    # The divergence from the H5P path: we own this player, so the source is shown
+    # as written instead of the question being withheld.
+    package = emit_scorm(_set([_short(has_latex=True)]))
+    assert any("LaTeX" in w and "q1" in w for w in package.warnings)
+    assert len(_payload(_set([_short(has_latex=True)]))["questions"]) == 1
+
+
+def test_max_points_includes_the_short_answer():
+    assessment = _set([_mcq(id="q1", points=1.0), _short(id="q2", key_points=[
+        KeyPoint(id="q2-k1", text="A", accepted=["land heats"]),
+        KeyPoint(id="q2-k2", text="B", accepted=["sea to land"]),
+    ])])
+    assert _payload(assessment)["max_points"] == 3.0
