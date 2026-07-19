@@ -23,6 +23,7 @@ import pytest
 
 from app.assessment.emit import EmptyAssessmentError, emit_h5p
 from app.packaging.h5p import ALLOWED_QUESTION_LIBRARIES
+from tests.factories import make_set as _set, make_mcq as _mcq, make_blank as _blank, make_short as _short
 from app.assessment.schema import (
     AssessmentSet,
     AssessmentSource,
@@ -39,43 +40,16 @@ from app.assessment.schema import (
 )
 
 
-def _set(questions, **overrides) -> AssessmentSet:
-    kwargs = {
-        "assessment_id": "a-1",
-        "source": AssessmentSource(filename="lesson.pdf", title="Lesson", page_count=2),
-        "generator": "test",
-        "model": "m",
-        "generated_at": datetime(2026, 7, 17, tzinfo=timezone.utc),
-        "questions": questions,
-    }
-    kwargs.update(overrides)
-    return AssessmentSet(**kwargs)
 
 
-def _mcq(**overrides) -> MCQItem:
-    kwargs = {
-        "id": "q1",
-        "prompt": "Which one?",
-        "choices": [
-            Choice(id="q1-c1", text="Right", is_correct=True),
-            Choice(id="q1-c2", text="Wrong"),
-        ],
-    }
-    kwargs.update(overrides)
-    return MCQItem(**kwargs)
 
 
-def _blank(**overrides) -> FillBlankItem:
-    kwargs = {
-        "id": "q1",
-        "text": "Water becomes vapour during [[1]].",
-        "blanks": [Blank(id="q1-b1", answers=["evaporation"])],
-    }
-    kwargs.update(overrides)
-    return FillBlankItem(**kwargs)
+
+
 
 
 def _match(**overrides) -> MatchItem:
+    """Local: this suite asserts on a match with NO distractor, unlike the shared one."""
     kwargs = {
         "id": "q1",
         "prompt": "Match them.",
@@ -626,19 +600,6 @@ def test_the_same_assessment_always_emits_the_same_bytes():
 # --- short answer -> H5P.Essay -----------------------------------------------
 
 
-def _short(**overrides) -> ShortAnswerItem:
-    kwargs = {
-        "id": "q1",
-        "prompt": "Explain how a sea breeze forms.",
-        "points": 2.0,
-        "model_answer": "The land heats faster, so wind blows from sea to land.",
-        "key_points": [
-            KeyPoint(id="q1-k1", text="Land warms faster", accepted=["land heats", "land warms"]),
-            KeyPoint(id="q1-k2", text="Air moves inland", accepted=["sea to land"]),
-        ],
-    }
-    kwargs.update(overrides)
-    return ShortAnswerItem(**kwargs)
 
 
 def test_a_short_answer_becomes_an_essay_the_question_set_will_accept():
