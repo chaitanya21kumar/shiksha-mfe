@@ -148,12 +148,15 @@ turned up only when the packages were played and looked at.
   requires all three to return identical marks. It is reproducible from the repo,
   and it does fail: replacing H5P's `\s\s` pass with a tidier `\s+` immediately
   diverges on `"wind blows from sea   to land"`.
-- Also verified by hand, once, and not reproducible from the repo: the `.h5p`
-  renders against the real `H5P.Essay` library in a browser and its own grader
-  awarded 3/3 where ours does, and the SCORM package ran in a fake LMS enforcing
-  Moodle's regexes with 44 API calls and no rejected writes. Those runs are what
-  prompted the automated parity test above; treat them as the reason it exists
-  rather than as evidence in their own right.
+- Also verified in a browser, and not reproducible from the repo: the `.h5p`
+  renders against the real `H5P.Essay` library and its own grader agrees with ours
+  — a full-marks answer scored 3/3 and a partially-correct one 2/3 — and the same
+  assessment as SCORM ran in a fake LMS enforcing Moodle's regexes with 44 API
+  calls, 39 CMI writes and no rejected writes. Those runs are what prompted the
+  automated parity test above; treat them as the reason it exists rather than as
+  evidence in their own right. They also earned their keep twice over: playing the
+  packages, rather than inspecting what they emitted, is what exposed the
+  disclosure defect recorded above.
 
 ## Limitations recorded rather than patched
 
