@@ -374,3 +374,55 @@ def test_assess_h5p_file_rejects_an_unsupported_type(use_model):
         files={"file": ("notes.rtf", b"x", "application/rtf")},
     )
     assert resp.status_code == 415
+
+
+def test_assess_scorm_packages_a_generated_set(use_model):
+    resp = client.post("/assess/scorm", json=_generated_set(use_model))
+
+    assert resp.status_code == 200
+    assert resp.headers["content-type"] == "application/zip"
+    assert resp.headers["content-disposition"] == 'attachment; filename="bio-scorm.zip"'
+    assert _members(resp.content) == [
+        "imsmanifest.xml",
+        "index.html",
+        "scorm/api.js",
+        "scorm/player.js",
+        "scorm/player.css",
+    ]
+
+
+def test_assess_scorm_output_is_a_scorm_12_package_both_target_lms_will_read(use_model):
+    resp = client.post("/assess/scorm", json=_generated_set(use_model))
+    manifest = zipfile.ZipFile(io.BytesIO(resp.content)).read("imsmanifest.xml").decode()
+
+    # Open edX's version sniff, and Moodle's literal scormtype lookup.
+    assert "<schemaversion>1.2</schemaversion>" in manifest
+    assert 'ADLCP:SCORMTYPE="SCO"' in manifest.upper()
+
+
+def test_assess_scorm_rejects_a_set_with_no_questions(use_model):
+    body = _generated_set(use_model)
+    body["questions"] = []
+
+    resp = client.post("/assess/scorm", json=body)
+
+    assert resp.status_code == 400
+
+
+def test_assess_scorm_file_parses_generates_and_packages_in_one_call(use_model):
+    use_model(_typed_handler)
+    resp = client.post(
+        "/assess/scorm/file",
+        files={"file": ("lesson.pdf", _sample_pdf_bytes(), "application/pdf")},
+    )
+
+    assert resp.status_code == 200
+    assert resp.headers["content-disposition"] == 'attachment; filename="lesson-scorm.zip"'
+    assert "imsmanifest.xml" in _members(resp.content)
+
+
+def test_assess_scorm_reports_nothing_dropped_because_the_package_owns_its_player(use_model):
+    # The H5P path can drop a question it cannot render. SCORM carries its own
+    # player, so it never does -- only the LMS reporting can degrade.
+    resp = client.post("/assess/scorm", json=_generated_set(use_model))
+    assert int(resp.headers["X-Package-Warning-Count"]) == 0

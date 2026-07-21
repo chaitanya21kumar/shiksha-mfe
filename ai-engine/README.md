@@ -59,6 +59,18 @@ follow.
 > versions it targets are pinned in
 > [`app/packaging/h5p/versions.py`](app/packaging/h5p/versions.py).
 
+The same assessment also packages as a **SCORM 1.2** course at `POST /assess/scorm`
+and `POST /assess/scorm/file`, importable into Moodle 4.x and Open edX. Where an
+H5P package ships content and the LMS supplies the player, a SCORM package **ships
+its own player** and the LMS supplies only a JavaScript API to report through — so
+it needs no prerequisites at all, and it honours per-question `points` exactly
+(H5P has no per-question weight and scores on its own scale). Multiple-choice,
+match-the-pair and fill-in-the-blank are reported as `cmi.interactions`, which
+Moodle surfaces in its Interactions report. LaTeX is shown as source rather than
+typeset — a SCORM package would have to carry its own maths renderer, which is
+tracked separately. See
+[`docs/adr/0005`](docs/adr/0005-scorm-12-packaging.md).
+
 ## Requirements
 
 - Python 3.11+ (developed on 3.12)
@@ -91,6 +103,8 @@ Then:
 - `POST /assess/file` — parse a document and generate an assessment in one call
 - `POST /assess/h5p` — package an assessment as an H5P Question Set (`.h5p`)
 - `POST /assess/h5p/file` — parse, generate and package in one call
+- `POST /assess/scorm` — package an assessment as a SCORM 1.2 course (`.zip`)
+- `POST /assess/scorm/file` — parse, generate and package as SCORM in one call
 - `GET /docs` — interactive API docs
 
 ## Test

@@ -28,6 +28,18 @@ build-backend = "setuptools.build_meta"
 [tool.setuptools.packages.find]
 include = ["app*"]
 
+# A SCORM package carries its own player, so these are shipped inside the wheel
+# and read at emit time. Without this they are silently absent from a build and
+# every generated package would be missing its JavaScript.
+#
+# The data is attached to `app.packaging.scorm`, which is a real package, rather
+# than to `...scorm.assets`, which is a plain directory. Keying it on the
+# directory also works — pyproject's `packages.find` defaults to namespaces=true,
+# so PEP 420 discovers it without an __init__.py — but that would leave the wheel
+# quietly depending on a default someone could reasonably tighten later.
+[tool.setuptools.package-data]
+"app.packaging.scorm" = ["assets/*"]
+
 [tool.pytest.ini_options]
 pythonpath = ["."]
 testpaths = ["tests"]
