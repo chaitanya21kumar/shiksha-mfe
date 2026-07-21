@@ -17,10 +17,12 @@ from app.assessment.schema import (
     Blank,
     Choice,
     FillBlankItem,
+    KeyPoint,
     MatchItem,
     MatchSource,
     MatchTarget,
     MCQItem,
+    ShortAnswerItem,
 )
 
 
@@ -150,3 +152,106 @@ def test_computed_max_points_and_counts():
     dumped = s.model_dump()
     assert dumped["max_points"] == pytest.approx(3.0)
     assert dumped["counts"] == {"mcq": 2}
+
+
+# --- short answer ------------------------------------------------------------
+
+
+def _key_points(n: int = 2) -> list[KeyPoint]:
+    return [
+        KeyPoint(id=f"q1-k{i}", text=f"Idea {i}", accepted=[f"phrase {i}"])
+        for i in range(1, n + 1)
+    ]
+
+
+def _short(**overrides) -> ShortAnswerItem:
+    kwargs = {
+        "id": "q1",
+        "prompt": "Explain it.",
+        "key_points": _key_points(2),
+        "model_answer": "phrase 1 and phrase 2.",
+        "points": 2.0,
+    }
+    kwargs.update(overrides)
+    return ShortAnswerItem(**kwargs)
+
+
+def test_short_answer_points_must_equal_the_summed_key_point_weights():
+    # H5P.Essay scores out of the summed keyword points and our SCORM grader awards
+    # the same weights, so a disagreement here would make one answer score
+    # differently in the two packages.
+    with pytest.raises(ValidationError, match="must equal the sum"):
+        _short(points=5.0)
+
+
+def test_a_short_answer_needs_at_least_two_key_points():
+    # One key point is a fill-in-the-blank wearing a textarea.
+    only_one = _key_points(1)
+    with pytest.raises(ValidationError):
+        _short(key_points=only_one, points=1.0)
+
+
+def test_a_short_answer_caps_at_four_key_points():
+    # Agreement between markers decays as marks per item grow, so the ceiling is a
+    # contract rule rather than a prompt request.
+    five = _key_points(5)
+    with pytest.raises(ValidationError):
+        _short(key_points=five, points=5.0)
+
+
+def test_duplicate_key_point_ids_are_rejected():
+    same_id = [
+        KeyPoint(id="q1-k1", text="One", accepted=["phrase one"]),
+        KeyPoint(id="q1-k1", text="Two", accepted=["phrase two"]),
+    ]
+    with pytest.raises(ValidationError, match="ids must be unique"):
+        _short(key_points=same_id)
+
+
+def test_duplicate_key_point_texts_are_rejected():
+    same_text = [
+        KeyPoint(id="q1-k1", text="Same", accepted=["phrase one"]),
+        KeyPoint(id="q1-k2", text="same", accepted=["phrase two"]),
+    ]
+    with pytest.raises(ValidationError, match="texts must be unique"):
+        _short(key_points=same_text)
+
+
+@pytest.mark.parametrize(
+    ("form", "why"),
+    [
+        ("", "blank"),
+        ("   ", "blank"),
+        ("heats * faster", "contain"),
+        ("/reverses/", "regex"),
+        ("x" * 61, "exceed"),
+    ],
+)
+def test_an_accepted_form_h5p_would_reinterpret_is_rejected(form, why):
+    # * is a wildcard to H5P.Essay and /…/ is compiled as a regex, so either would
+    # match something other than itself. The 60-char cap also keeps every SCORM
+    # correct_responses pattern inside CMIString255.
+    with pytest.raises(ValidationError, match=why):
+        KeyPoint(id="k", text="t", accepted=[form])
+
+
+def test_accepted_forms_are_unique_case_insensitively():
+    with pytest.raises(ValidationError, match="unique"):
+        KeyPoint(id="k", text="t", accepted=["Land Heats", "land heats"])
+
+
+def test_min_chars_cannot_exceed_max_chars():
+    with pytest.raises(ValidationError, match="cannot exceed"):
+        _short(min_chars=500, max_chars=100)
+
+
+def test_adding_a_short_answer_leaves_the_computed_fields_correct():
+    # Additivity: max_points and counts walk the list, so the fourth union member
+    # is picked up with no change to either.
+    assessment = _set([_mcq(), _short(id="q2", key_points=[
+        KeyPoint(id="q2-k1", text="A", accepted=["a"]),
+        KeyPoint(id="q2-k2", text="B", accepted=["b"]),
+        KeyPoint(id="q2-k3", text="C", accepted=["c"]),
+    ], points=3.0)])
+    assert assessment.max_points == pytest.approx(4.0)
+    assert assessment.counts == {"mcq": 1, "short_answer": 1}

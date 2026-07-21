@@ -47,6 +47,7 @@ from ..schema import (
     MatchItem,
     MCQItem,
     Question,
+    ShortAnswerItem,
     default_score_bands,
 )
 from .errors import EmptyAssessmentError
@@ -102,23 +103,33 @@ def _weighting(points: float, parts: int = 1) -> tuple[str, str | None]:
     return f"{share:g}", None
 
 
+
+def _too_many_options(item_id: str, what: str) -> str:
+    """The warning for a question SCORM cannot identify, but we still ask and score."""
+    return (
+        f"Not reporting {item_id} to the LMS: it has more than 36 {what} and SCORM 1.2 "
+        "identifies each one with a single character. The question is still asked and "
+        "still scored."
+    )
+
+
+def _pattern_too_long(item_id: str) -> str:
+    return f"Not reporting {item_id} to the LMS: its answer pattern exceeds 255 characters."
+
+
 def _mcq_interaction(item: MCQItem, warnings: list[str]) -> dict[str, object] | None:
     """`choice`: single-character ids, comma-separated. No brackets — that is 2004."""
     try:
         chars = [response_char(index) for index, _ in enumerate(item.choices)]
     except ValueError:
-        warnings.append(
-            f"Not reporting {item.id} to the LMS: it has more than 36 options and "
-            "SCORM 1.2 identifies each one with a single character. The question is "
-            "still asked and still scored."
-        )
+        warnings.append(_too_many_options(item.id, "options"))
         return None
 
     correct = ",".join(
         char for char, choice in zip(chars, item.choices) if choice.is_correct
     )
     if len(correct) > RESPONSE_MAX_CHARS:
-        warnings.append(f"Not reporting {item.id} to the LMS: its answer pattern exceeds 255 characters.")
+        warnings.append(_pattern_too_long(item.id))
         return None
 
     weighting, clamped = _weighting(item.points)
@@ -133,11 +144,7 @@ def _match_interaction(item: MatchItem, warnings: list[str]) -> dict[str, object
         source_chars = {s.id: response_char(i) for i, s in enumerate(item.sources)}
         target_chars = {t.id: response_char(i) for i, t in enumerate(item.targets)}
     except ValueError:
-        warnings.append(
-            f"Not reporting {item.id} to the LMS: it has more than 36 terms and SCORM "
-            "1.2 identifies each one with a single character. The question is still "
-            "asked and still scored."
-        )
+        warnings.append(_too_many_options(item.id, "terms"))
         return None
 
     pattern = ",".join(
@@ -146,7 +153,7 @@ def _match_interaction(item: MatchItem, warnings: list[str]) -> dict[str, object
         if s.target_id in target_chars
     )
     if len(pattern) > RESPONSE_MAX_CHARS:
-        warnings.append(f"Not reporting {item.id} to the LMS: its answer pattern exceeds 255 characters.")
+        warnings.append(_pattern_too_long(item.id))
         return None
 
     weighting, clamped = _weighting(item.points)
@@ -272,6 +279,51 @@ def _blanks_payload(item: FillBlankItem, warnings: list[str]) -> dict[str, objec
     }
 
 
+def _short_answer_payload(item: ShortAnswerItem, warnings: list[str]) -> dict[str, object]:
+    """One `fill-in` interaction per key point, like a blank — and for the same reason.
+
+    Reporting a single verdict for the whole answer would tell a teacher only that it
+    was wrong. One interaction per key point makes each mark show up separately in
+    Moodle's Interactions report, so they can see *which* points the learner made.
+
+    `student_response` carries the matched phrase rather than the learner's prose.
+    That is not a workaround for CMIString255 — the contract caps a phrase at 60
+    characters, so it cannot overflow — it is the more useful value, because it is
+    the evidence that earned the mark. The prose itself travels in `cmi.comments`.
+    """
+    interactions = []
+    for point in item.key_points:
+        weighting, clamped = _weighting(float(point.weight))
+        if clamped:
+            warnings.append(f"{item.id}: {clamped}.")
+        interactions.append(
+            {
+                "id": point.id,
+                "type": "fill-in",
+                "correct_responses": list(point.accepted),
+                "weighting": weighting,
+            }
+        )
+    return {
+        "prompt": item.prompt,
+        "model_answer": item.model_answer,
+        "min_chars": item.min_chars,
+        "max_chars": item.max_chars,
+        "key_points": [
+            {
+                "id": point.id,
+                "text": point.text,
+                "accepted": list(point.accepted),
+                "weight": point.weight,
+                "feedback_hit": point.feedback_hit,
+                "feedback_miss": point.feedback_miss,
+            }
+            for point in item.key_points
+        ],
+        "interactions": interactions,
+    }
+
+
 def _question_payload(question: Question, warnings: list[str]) -> dict[str, object]:
     """Everything the player needs for one question, including its answer key."""
     common: dict[str, object] = {
@@ -285,8 +337,15 @@ def _question_payload(question: Question, warnings: list[str]) -> dict[str, obje
         common.update(_mcq_payload(question, warnings))
     elif isinstance(question, MatchItem):
         common.update(_match_payload(question, warnings))
-    else:
+    elif isinstance(question, ShortAnswerItem):
+        common.update(_short_answer_payload(question, warnings))
+    elif isinstance(question, FillBlankItem):
         common.update(_blanks_payload(question, warnings))
+    else:  # pragma: no cover - a type nobody taught this emitter about
+        # Explicit rather than a catch-all `else`, which previously routed anything
+        # unrecognised into the fill-in-the-blank branch and raised AttributeError on
+        # a field it did not have.
+        raise ValueError(f"{question.type} is not a type the SCORM emitter can package")
     return common
 
 

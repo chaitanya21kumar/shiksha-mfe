@@ -184,7 +184,149 @@ class FillBlankItem(_QuestionBase):
         return self
 
 
-Question = Annotated[Union[MCQItem, MatchItem, FillBlankItem], Field(discriminator="type")]
+#: Characters H5P.Essay's matcher reinterprets rather than matches: ``*`` is a
+#: wildcard, and a form wrapped in ``/`` is compiled as a regular expression. A
+#: form containing either would match something other than itself — silently, and
+#: only for some learners. Wildcards are additionally unusable for us: H5P's
+#: wildcard character class covers Latin, Greek, Cyrillic, kana, CJK and Thai but
+#: **not** Devanagari or the other Indic scripts, so one would work in English
+#: content and quietly fail in Hindi.
+_UNMATCHABLE_FORM = "*"
+
+#: A key point is a phrase, not a sentence. The cap also keeps every SCORM
+#: ``correct_responses`` pattern well inside CMIString255.
+_MAX_ACCEPTED_CHARS = 60
+
+#: Mirrors the normalisation the grader applies to a learner's answer, so the
+#: contract can refuse a phrase the grader could never find. Kept here rather than
+#: imported to avoid a cycle: grading.py imports this module.
+_NEWLINE_OR_DOUBLE_SPACE = re.compile(r"(\r\n|\r|\n)|\s\s")
+
+
+def _collapse_whitespace(text: str) -> str:
+    return _NEWLINE_OR_DOUBLE_SPACE.sub(" ", text)
+
+
+class KeyPoint(BaseModel):
+    """One criterion of a short answer's mark scheme: an idea worth ``weight`` marks.
+
+    ``accepted`` holds the surface forms that count as having made the point. Every
+    one of them must occur in the source document — the pipeline drops any that do
+    not — so a mark is never awarded for a phrase the tenant's material does not
+    contain. That is the same rule the fill-in-the-blank answers already follow,
+    and for the same reason: a mark scheme *is* an answer key.
+    """
+
+    id: str = Field(description="Stable id, assigned by the pipeline (e.g. 'q1-k1').")
+    text: str = Field(description="The idea the learner must express; shown as the mark scheme.")
+    accepted: list[str] = Field(
+        min_length=1,
+        max_length=6,
+        description="Surface forms that score this point; each must appear in the source.",
+    )
+    weight: int = Field(
+        default=1,
+        ge=1,
+        le=5,
+        description="Marks for making this point. An integer, so H5P's max score stays integral.",
+    )
+    feedback_hit: str | None = Field(default=None, description="Shown when the point was made.")
+    feedback_miss: str | None = Field(default=None, description="Shown when it was not.")
+
+    @model_validator(mode="after")
+    def _check_accepted(self) -> KeyPoint:
+        seen: set[str] = set()
+        for form in self.accepted:
+            cleaned = form.strip()
+            if not cleaned:
+                raise ValueError("an accepted form cannot be blank")
+            if _UNMATCHABLE_FORM in cleaned:
+                raise ValueError("an accepted form cannot contain '*'")
+            if cleaned.startswith("/") and cleaned.endswith("/"):
+                raise ValueError("an accepted form cannot be a /regex/")
+            if len(cleaned) > _MAX_ACCEPTED_CHARS:
+                raise ValueError(
+                    f"an accepted form cannot exceed {_MAX_ACCEPTED_CHARS} characters"
+                )
+            # The learner's text is normalised before the search, so a phrase whose
+            # own normalisation changes it could never be found — an embedded newline
+            # or double space makes it a mark nobody can earn.
+            if _collapse_whitespace(cleaned) != cleaned:
+                raise ValueError("an accepted form cannot contain a newline or a double space")
+            lowered = cleaned.lower()
+            if lowered in seen:
+                raise ValueError("accepted forms must be unique")
+            seen.add(lowered)
+        return self
+
+
+class ShortAnswerItem(_QuestionBase):
+    """A short constructed-response question, marked on key-point coverage.
+
+    The learner writes two or three sentences in their own words, and the package
+    marks it by checking whether each key point's accepted forms appear in that
+    text. This is a **points-based mark scheme** — the instrument exam boards use
+    when a salient point corresponds to a mark — automated, not an essay grader.
+
+    The distinction matters because there is no model at grading time: a packaged
+    quiz runs inside the LMS, offline. So nothing here judges reasoning, ordering
+    or coherence, and an answer that is correct in entirely different words will
+    score zero. What that does and does not claim is set out in
+    ``docs/adr/0006-short-answer-questions.md``; the results screen shows the
+    learner which points were found and the full model answer, so the marking is
+    never a black box.
+    """
+
+    type: Literal["short_answer"] = "short_answer"
+    prompt: str = Field(description="The question stem.")
+    key_points: list[KeyPoint] = Field(
+        min_length=2,
+        max_length=4,
+        description=(
+            "The mark scheme. Two is the floor — one key point is a fill-in-the-blank "
+            "in disguise. Four is the ceiling because agreement between markers decays "
+            "as the number of marks per item grows."
+        ),
+    )
+    model_answer: str = Field(
+        description="A complete answer, assembled from the source; shown after submission."
+    )
+    min_chars: int = Field(
+        default=0,
+        ge=0,
+        description="Minimum length before the answer may be submitted (H5P behaviour.minimumLength).",
+    )
+    max_chars: int = Field(
+        default=1000,
+        ge=1,
+        description="Maximum length of the answer (H5P behaviour.maximumLength).",
+    )
+
+    @model_validator(mode="after")
+    def _check_key_points(self) -> ShortAnswerItem:
+        ids = [k.id for k in self.key_points]
+        if len(set(ids)) != len(ids):
+            raise ValueError("key point ids must be unique")
+        texts = [k.text.strip().lower() for k in self.key_points]
+        if len(set(texts)) != len(texts):
+            raise ValueError("key point texts must be unique")
+        # Unlike the other three types, `points` is not independent here. H5P.Essay
+        # scores out of the sum of its keyword points and our SCORM grader awards
+        # the same weights, so letting the two disagree would make one answer score
+        # differently in the two packages.
+        total = float(sum(k.weight for k in self.key_points))
+        if abs(self.points - total) > 1e-9:
+            raise ValueError(
+                f"points ({self.points}) must equal the sum of key point weights ({total})"
+            )
+        if self.min_chars > self.max_chars:
+            raise ValueError("min_chars cannot exceed max_chars")
+        return self
+
+
+Question = Annotated[
+    Union[MCQItem, MatchItem, FillBlankItem, ShortAnswerItem], Field(discriminator="type")
+]
 
 
 class AssessmentSource(BaseModel):

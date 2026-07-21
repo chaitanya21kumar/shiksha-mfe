@@ -5,6 +5,12 @@ __pycache__/
 *.egg-info/
 .pytest_cache/
 
+# Build artifacts. `python -m build` stages a full copy of the package under
+# build/lib, which is a duplicate of the source tree — committed by accident it
+# reads as 50% duplicated code, and it goes stale the moment anything changes.
+build/
+dist/
+
 # Local config & artifacts
 .env
 *.log

@@ -104,3 +104,52 @@ def fill_blank_prompt(numbered: list[tuple[int, str | None, str]], count: int) -
         'hint>"}], "explanation": "<grounded rationale>"}]}',
         numbered,
     )
+
+
+def short_answer_prompt(numbered: list[tuple[int, str | None, str]], count: int) -> str:
+    """Ask for short constructed-response questions with a grounded mark scheme.
+
+    The mark scheme is the part that matters. A packaged quiz runs offline inside
+    the LMS with no model available, so the marking is exact phrase matching — which
+    means every accepted phrase has to be a phrase a learner would plausibly write
+    *and* one that occurs in the source. The pipeline drops any that does not.
+    """
+    return _wrap(
+        f"Write up to {count} short-answer questions from the source. A learner "
+        "answers each one in their own words, in two or three sentences.\n"
+        "- Ask the learner to state, name, describe or explain something the source "
+        "says. The question must be answerable from the source alone.\n"
+        '- First write "evidence": copy the sentence, or two sentences, that the '
+        "answer comes from. Copy them exactly as they appear.\n"
+        '- In "key_points", give 2 to 4 separate ideas a complete answer must '
+        "contain — one idea per key point. Never write a key point that offers a "
+        'choice ("either X or Y").\n'
+        '- For each key point, "accepted" lists 2 to 4 phrases that show the learner '
+        "made that point. THIS IS THE PART THAT MATTERS MOST:\n"
+        "  * Every phrase must be a run of words COPIED OUT OF THE EVIDENCE you just "
+        "quoted — the same words, in the same order, spelled the same way.\n"
+        "  * Copy, do not summarise. Keep the small words. If the evidence says "
+        '"gravity is the force that pulls water back", then "gravity is the force" '
+        'and "pulls water back" are both fine, but "gravity pulls" is NOT — those '
+        "two words are not next to each other in the sentence.\n"
+        "  * Three to six words works best. One or two words is usually too common "
+        "to mean anything; a whole clause is too long for a learner to reproduce.\n"
+        "  * Check each phrase against the evidence before you write it down.\n"
+        "- Never put * or / in an accepted phrase. They are not wildcards here and "
+        "will not match.\n"
+        '- In "model_answer", write a complete answer that contains every accepted '
+        "phrase you listed, word for word.\n"
+        'Example — evidence: "During the day the land heats faster than the water, '
+        'so wind blows from sea to land." Good phrases: "the land heats faster", '
+        '"wind blows from sea to land". Bad phrases: "land warms" (the word "warms" '
+        'is not in the sentence), "heats faster than water" (the word "the" was '
+        "dropped).\n"
+        'Shape: {"questions": [{"source_section": <int>, "evidence": "<exact quote '
+        'from that section>", "prompt": "<the question>", "key_points": [{"text": '
+        '"<the idea>", "accepted": ["<phrase from the source>", "<variant>"], '
+        '"feedback_hit": "<shown when the point was made>", "feedback_miss": "<a '
+        'hint, without giving the answer away>"}], "model_answer": "<a complete '
+        'answer containing every accepted phrase>", "explanation": "<grounded '
+        'rationale>"}]}',
+        numbered,
+    )

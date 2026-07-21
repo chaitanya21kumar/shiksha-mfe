@@ -77,6 +77,20 @@ def _questions_for(user: str) -> list[dict]:
                 "pairs": [{"left": "Plants", "right": "Food"}, {"left": "Light", "right": "Energy"}],
             }
         ]
+    if "short-answer" in user:
+        return [
+            {
+                "source_section": 1,
+                "evidence": _EVIDENCE,
+                "prompt": "Describe where and how plants make food.",
+                "key_points": [
+                    {"text": "They use light", "accepted": ["from light"]},
+                    {"text": "It happens in the chloroplast", "accepted": ["in the chloroplast"]},
+                ],
+                # Contains both accepted phrases, so it passes the self-check.
+                "model_answer": "Plants make food from light in the chloroplast.",
+            }
+        ]
     return [
         {
             "source_section": 1,
@@ -120,8 +134,9 @@ def test_assess_generates_every_type_by_default(use_model):
 
     assert resp.status_code == 200
     body = resp.json()
-    assert body["counts"] == {"mcq": 1, "match": 1, "fill_blank": 1}
-    assert body["max_points"] == pytest.approx(3.0)
+    assert body["counts"] == {"mcq": 1, "match": 1, "fill_blank": 1, "short_answer": 1}
+    # The short answer is worth one mark per key point, and the fixture gives it two.
+    assert body["max_points"] == pytest.approx(5.0)
     assert body["assessment_id"] and body["language"] == "en"
     assert body["model"]  # provenance from config
     assert body["warnings"] == []

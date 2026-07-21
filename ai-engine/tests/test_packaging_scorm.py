@@ -353,3 +353,21 @@ def test_every_file_the_emitter_reads_actually_exists():
     assets = resources.files("app.packaging.scorm").joinpath("assets")
     for name in ("index.html", "api.js", "player.js", "player.css"):
         assert assets.joinpath(name).is_file(), name
+
+
+def test_a_made_point_is_distinguishable_without_seeing_colour():
+    # The results screen showed made and missed key points in green and red and
+    # nothing else, which a red/green colour-blind learner cannot read at all
+    # (WCAG 1.4.1). The outcome is carried by a glyph, and spelled out in words
+    # for a screen reader; colour only reinforces it. The H5P package's feedback
+    # rows are marked the same way, so the two disclose identically.
+    assets = resources.files("app.packaging.scorm").joinpath("assets")
+    player = assets.joinpath("player.js").read_text(encoding="utf-8")
+    css = assets.joinpath("player.css").read_text(encoding="utf-8")
+
+    assert '"✓"' in player and '"✗"' in player
+    assert "Point made: " in player and "Point missed: " in player
+    # Hidden with clip-path, not display:none, which would take it out of the
+    # accessibility tree along with the layout.
+    assert ".sr-only" in css and "clip-path" in css
+    assert "display: none" not in css.split(".sr-only")[1].split("}")[0]

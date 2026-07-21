@@ -22,57 +22,34 @@ from datetime import datetime, timezone
 import pytest
 
 from app.assessment.emit import EmptyAssessmentError, emit_h5p
+from app.packaging.h5p import ALLOWED_QUESTION_LIBRARIES
+from tests.factories import make_set as _set, make_mcq as _mcq, make_blank as _blank, make_short as _short
 from app.assessment.schema import (
     AssessmentSet,
     AssessmentSource,
     Blank,
     Choice,
     FillBlankItem,
+    KeyPoint,
     MatchItem,
     MatchSource,
     MatchTarget,
     MCQItem,
     ScoreBand,
+    ShortAnswerItem,
 )
 
 
-def _set(questions, **overrides) -> AssessmentSet:
-    kwargs = {
-        "assessment_id": "a-1",
-        "source": AssessmentSource(filename="lesson.pdf", title="Lesson", page_count=2),
-        "generator": "test",
-        "model": "m",
-        "generated_at": datetime(2026, 7, 17, tzinfo=timezone.utc),
-        "questions": questions,
-    }
-    kwargs.update(overrides)
-    return AssessmentSet(**kwargs)
 
 
-def _mcq(**overrides) -> MCQItem:
-    kwargs = {
-        "id": "q1",
-        "prompt": "Which one?",
-        "choices": [
-            Choice(id="q1-c1", text="Right", is_correct=True),
-            Choice(id="q1-c2", text="Wrong"),
-        ],
-    }
-    kwargs.update(overrides)
-    return MCQItem(**kwargs)
 
 
-def _blank(**overrides) -> FillBlankItem:
-    kwargs = {
-        "id": "q1",
-        "text": "Water becomes vapour during [[1]].",
-        "blanks": [Blank(id="q1-b1", answers=["evaporation"])],
-    }
-    kwargs.update(overrides)
-    return FillBlankItem(**kwargs)
+
+
 
 
 def _match(**overrides) -> MatchItem:
+    """Local: this suite asserts on a match with NO distractor, unlike the shared one."""
     kwargs = {
         "id": "q1",
         "prompt": "Match them.",
@@ -618,3 +595,141 @@ def test_an_awkward_source_filename_still_yields_a_safe_one():
 def test_the_same_assessment_always_emits_the_same_bytes():
     assessment = _set([_mcq(id="q1"), _blank(id="q2"), _match(id="q3")])
     assert emit_h5p(assessment).content == emit_h5p(assessment).content
+
+
+# --- short answer -> H5P.Essay -----------------------------------------------
+
+
+
+
+def test_a_short_answer_becomes_an_essay_the_question_set_will_accept():
+    assert _content(_set([_short()]))["questions"][0]["library"] == "H5P.Essay 1.5"
+
+
+def test_the_essay_library_is_on_the_installed_whitelist():
+    # questions[].library is matched by exact string equality against a whitelist
+    # baked into the installed Question Set — a version it lacks is a hard rejection.
+    assert "H5P.Essay 1.5" in ALLOWED_QUESTION_LIBRARIES
+
+
+def test_the_package_declares_essay_and_the_matcher_it_depends_on():
+    manifest = json.loads(zipfile.ZipFile(io.BytesIO(emit_h5p(_set([_short()])).content)).read("h5p.json"))
+    declared = {d["machineName"] for d in manifest["preloadedDependencies"]}
+    # TextUtilities is the easy one to forget: three other libraries already pull it
+    # in, but it is what Essay's isIsolated lives in, and without it the matcher is
+    # unusable.
+    assert {"H5P.Essay", "H5P.TextUtilities"} <= declared
+
+
+def test_every_keyword_carries_a_complete_options_group():
+    # essay.js reads alternativeGroup.options with no `|| {}` guard and dereferences
+    # .points and .occurrences. A missing group is a TypeError that takes the whole
+    # activity down; a missing points makes the score NaN. Neither degrades — both
+    # are fatal, and semantics defaults do not apply to a machine-written file.
+    for keyword in _params(_set([_short()]))["keywords"]:
+        assert {"points", "occurrences", "caseSensitive"} <= set(keyword["options"])
+        assert keyword["options"]["points"] is not None
+        assert keyword["options"]["occurrences"] == 1
+
+
+def test_keyword_matching_is_forced_case_insensitive():
+    # H5P defaults this to true. A learner should not lose a mark for starting a
+    # sentence in lower case.
+    params = _params(_set([_short()]))
+    assert all(k["options"]["caseSensitive"] is False for k in params["keywords"])
+    assert params["behaviour"]["overrideCaseSensitive"] == "off"
+
+
+def test_percentage_passing_is_present_so_a_blank_answer_does_not_report_as_passed():
+    # Omitted, essay.js computes `undefined * scoreMax / 100 || 0` -> 0, and every
+    # submission including an empty one reports success.
+    assert _params(_set([_short()]))["behaviour"]["percentagePassing"] == 100
+
+
+def test_percentage_mastering_is_absent_so_the_max_score_is_our_weights():
+    # Essay reads `percentageMastering === undefined ? scoreMax : pct * scoreMax/100`,
+    # so any value below 100 would LOWER the max score rather than raise a threshold.
+    assert "percentageMastering" not in _params(_set([_short()]))["behaviour"]
+
+
+def test_input_field_size_is_the_string_the_select_declares():
+    assert _params(_set([_short()]))["behaviour"]["inputFieldSize"] == "10"
+
+
+def test_the_essays_overall_feedback_is_flat_like_every_other_type():
+    # Essay declares overallFeedback as a group wrapping a list — exactly as
+    # MultiChoice does — and H5P collapses single-field groups, which is why the
+    # Hub's own authored content emits it flat.
+    params = _params(_set([_short(explanation="Because the passage says so.")]))
+    assert isinstance(params["overallFeedback"], list)
+
+
+def test_the_solution_group_stays_nested_because_it_has_two_fields():
+    # The flattening rule applies to single-field groups only, so `solution` keeps
+    # its shape where `overallFeedback` loses its wrapper.
+    solution = _params(_set([_short()]))["solution"]
+    assert set(solution) == {"introduction", "sample"}
+
+
+def test_h5ps_max_score_equals_our_points_so_no_scale_warning_is_emitted():
+    # A replica of essay.js's toPoints/computeScore: max(1, sum(points * occurrences)).
+    item = _short()
+    params = _params(_set([item]))
+    implied = max(1, sum(k["options"]["points"] * k["options"]["occurrences"] for k in params["keywords"]))
+    assert implied == item.points
+    assert not any("points" in w for w in emit_h5p(_set([item])).warnings)
+
+
+def test_a_short_answer_needing_latex_is_dropped_with_a_warning():
+    # The learner answers in a plain textarea: there is no markup for MathDisplay to
+    # typeset and no way to type LaTeX into it. It still ships in the SCORM package.
+    package = emit_h5p(_set([_short(id="q1", has_latex=True), _mcq(id="q2")]))
+    assert any("q1" in w and "plain-text" in w for w in package.warnings)
+
+
+def test_an_accepted_form_containing_an_ampersand_round_trips():
+    # Escaped on the way in; Essay's computeResults maps every alternative through
+    # htmlDecode before matching, so both sides arrive decoded.
+    item = _short(key_points=[
+        KeyPoint(id="q1-k1", text="R&D matters", accepted=["r&d spending"]),
+        KeyPoint(id="q1-k2", text="Other", accepted=["other thing"]),
+    ], model_answer="r&d spending and other thing")
+    keyword = _params(_set([item]))["keywords"][0]["keyword"]
+    assert "&amp;" in keyword
+    assert html.unescape(keyword) == "r&d spending"
+
+
+def test_the_feedback_table_says_which_points_were_made_and_which_were_missed():
+    # Essay styles every row of its feedback table identically and offers no
+    # hit/miss affordance, so a bare sentence leaves the two indistinguishable on
+    # screen — and the disclosure ADR-0006 rests on is exactly that distinction.
+    # Caught by looking at the rendered package rather than at the params.
+    options = [k["options"] for k in _params(_set([_short()]))["keywords"]]
+    for group in options:
+        assert group["feedbackIncluded"].startswith("✓ ")
+        assert group["feedbackMissed"].startswith("✗ ")
+
+
+def test_every_criterion_is_named_in_its_own_feedback():
+    # Whether or not the model wrote a remark, the learner is told which point the
+    # row is about — otherwise "Yes, that is the driver." names nothing.
+    item = _short(key_points=[
+        KeyPoint(id="q1-k1", text="Land warms faster", accepted=["land heats"], feedback_hit="Yes."),
+        KeyPoint(id="q1-k2", text="Air moves inland", accepted=["sea to land"]),
+    ], model_answer="land heats and sea to land")
+    groups = [k["options"] for k in _params(_set([item]))["keywords"]]
+    assert groups[0]["feedbackIncluded"] == "✓ Land warms faster — Yes."
+    assert groups[1]["feedbackIncluded"] == "✓ Air moves inland"
+    assert groups[1]["feedbackMissed"] == "✗ Air moves inland"
+
+
+def test_a_models_remark_is_escaped_where_it_joins_the_criterion():
+    # The remark is model-written text landing in an HTML feedback cell.
+    item = _short(key_points=[
+        KeyPoint(id="q1-k1", text="Land warms", accepted=["land heats"],
+                 feedback_hit="<script>alert(1)</script>"),
+        KeyPoint(id="q1-k2", text="Air moves inland", accepted=["sea to land"]),
+    ], model_answer="land heats and sea to land")
+    included = _params(_set([item]))["keywords"][0]["options"]["feedbackIncluded"]
+    assert "<script>" not in included
+    assert "&lt;script&gt;" in included
