@@ -15,6 +15,7 @@ import httpx
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
+from .assessment.emit import EmptyAssessmentError
 from .assessment.router import router as assessment_router
 from .config import settings
 from .ingestion.router import router as ingestion_router
@@ -100,6 +101,10 @@ def create_app() -> FastAPI:
     # so the endpoints stay thin and never raise transport-layer exceptions themselves.
     @app.exception_handler(EmptyDocumentError)
     async def _on_empty_document(request: Request, exc: EmptyDocumentError) -> JSONResponse:
+        return JSONResponse(status_code=400, content={"detail": str(exc)})
+
+    @app.exception_handler(EmptyAssessmentError)
+    async def _on_empty_assessment(request: Request, exc: EmptyAssessmentError) -> JSONResponse:
         return JSONResponse(status_code=400, content={"detail": str(exc)})
 
     @app.exception_handler(LLMUnavailable)

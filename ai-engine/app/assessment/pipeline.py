@@ -461,6 +461,7 @@ async def generate_assessment(
     question_types: list[QuestionType],
     count: int,
     language: str,
+    pass_percentage: int = 50,
 ) -> AssessmentSet:
     """Derive a source-grounded assessment from a parsed document."""
     sections = _build_sections(doc)
@@ -506,6 +507,7 @@ async def generate_assessment(
         generator=config.provider,
         model=config.model,
         generated_at=datetime.now(timezone.utc),
+        pass_percentage=pass_percentage,
         questions=questions,
         warnings=warnings,
     )
