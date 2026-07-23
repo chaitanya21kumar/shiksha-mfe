@@ -7,7 +7,7 @@
 - ``POST /assess/h5p/file`` takes an upload and does parse + generate + package.
 
 The generating endpoints accept ``question_types`` (any of mcq, match,
-fill_blank; defaults to all three), ``count`` (questions per type), ``language``
+fill_blank, short_answer; defaults to all four), ``count`` (questions per type), ``language``
 (BCP-47 tag), and ``pass_percentage`` (the mastery threshold, which becomes H5P's
 passPercentage and drives the default rubric). Like the other generative routers
 the endpoints stay thin: the pipeline raises the shared domain errors (empty
@@ -61,7 +61,10 @@ _ERROR_RESPONSES = {
 }
 
 _TYPES_QUERY = Query(
-    description="Question types to generate (any of mcq, match, fill_blank). Defaults to all three."
+    description=(
+        "Question types to generate (any of mcq, match, fill_blank, short_answer). "
+        "Defaults to all four."
+    )
 )
 _COUNT_QUERY = Query(ge=1, le=20, description="Questions to generate per requested type.")
 _LANGUAGE_QUERY = Query(description="BCP-47 language tag of the source (e.g. en, hi).")
