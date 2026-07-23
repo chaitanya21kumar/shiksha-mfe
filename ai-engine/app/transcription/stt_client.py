@@ -18,6 +18,7 @@ from asyncio import sleep as _sleep
 from pathlib import Path
 from typing import Any
 
+import anyio
 import httpx
 
 # A rate-limited request (HTTP 429) is retried a few times with backoff, capped so
@@ -55,11 +56,14 @@ async def transcribe_audio(
 ) -> dict[str, Any]:
     """Transcribe one media file and return the gateway's ``verbose_json`` reply.
 
-    The file is re-opened per attempt so a retried request re-streams cleanly. A
-    rate-limit (HTTP 429) is retried with backoff; any other failure maps to an
-    `STTError` subclass.
+    The file is read once, asynchronously, so a synchronous open never blocks the
+    event loop, and the bytes are reused across retries. A rate-limit (HTTP 429)
+    is retried with backoff; any other failure maps to an `STTError` subclass.
     """
     path = Path(audio_path)
+    async with await anyio.open_file(path, "rb") as handle:
+        audio_bytes = await handle.read()
+
     data: dict[str, str] = {"model": model, "response_format": "verbose_json"}
     if language:
         data["language"] = language
@@ -71,9 +75,8 @@ async def transcribe_audio(
 
     for attempt in range(max_retries + 1):
         try:
-            with path.open("rb") as handle:
-                files = {"file": (path.name, handle, "application/octet-stream")}
-                response = await client.post(url, data=data, files=files, headers=headers)
+            files = {"file": (path.name, audio_bytes, "application/octet-stream")}
+            response = await client.post(url, data=data, files=files, headers=headers)
             response.raise_for_status()
         except (httpx.ConnectError, httpx.ConnectTimeout) as exc:
             raise STTUnavailable(f"Could not reach the STT gateway at {base_url}: {exc}") from exc

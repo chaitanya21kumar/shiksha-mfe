@@ -129,9 +129,9 @@ def test_a_non_json_body_maps_to_bad_response(audio_file):
         _run(handler, audio_file)
 
 
-def test_the_temp_file_is_re_read_on_retry(audio_file):
-    # The retry re-opens the file rather than reusing a consumed handle, so the
-    # second attempt still carries the audio bytes.
+def test_the_audio_bytes_are_resent_on_retry(audio_file):
+    # The file is read once and its bytes reused, so a retried request still
+    # carries the full audio rather than a consumed, empty handle.
     seen_sizes = []
 
     def handler(request: httpx.Request) -> httpx.Response:
