@@ -74,3 +74,21 @@ def test_a_chaptered_transcript_round_trips_through_json():
         ]
     )
     assert ChapteredTranscript.model_validate_json(original.model_dump_json()) == original
+
+
+def test_the_contract_bounds_the_chapter_count_and_title_length():
+    # POST /interactive-video takes a hand-built ChapteredTranscript, and a JSON
+    # body has no equivalent of the upload ceiling. The generator's own invariants
+    # therefore live on the contract, where the emitter can rely on them.
+    from app.chaptering.schema import MAX_CHAPTERS, MAX_TITLE_CHARS
+
+    with pytest.raises(ValidationError):
+        Chapter(index=1, start=0.0, end=1.0, title="x" * (MAX_TITLE_CHARS + 1))
+
+    with pytest.raises(ValidationError):
+        _chaptered(
+            chapters=[
+                Chapter(index=i, start=float(i), end=float(i) + 1, title=f"C{i}")
+                for i in range(1, MAX_CHAPTERS + 2)
+            ]
+        )

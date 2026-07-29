@@ -23,6 +23,14 @@ from pydantic import BaseModel, Field, model_validator
 
 from ..transcription.schema import TranscriptSource
 
+#: The chaptering pipeline never produces more than this, and the emitter renders
+#: one navigation-bar mark per chapter. Bounding it in the contract as well is what
+#: keeps a hand-built request body from packaging a player that has to draw
+#: thousands of marks — a JSON body has no equivalent of the upload ceiling.
+MAX_CHAPTERS = 24
+#: Long enough for a real heading, short enough for the bookmark menu.
+MAX_TITLE_CHARS = 120
+
 
 class Chapter(BaseModel):
     """One titled span of the recording."""
@@ -30,7 +38,9 @@ class Chapter(BaseModel):
     index: int = Field(ge=1, description="1-based position of this chapter.")
     start: float = Field(ge=0, description="Start time in seconds from the media start.")
     end: float = Field(ge=0, description="End time in seconds from the media start.")
-    title: str = Field(description="A short heading for this chapter.")
+    title: str = Field(
+        max_length=MAX_TITLE_CHARS, description="A short heading for this chapter."
+    )
     segment_indexes: list[int] = Field(
         default_factory=list,
         description="The 1-based TranscriptSegment indexes this chapter covers.",
@@ -62,7 +72,7 @@ class ChapteredTranscript(BaseModel):
     model: str = Field(description="The model that generated the titles.")
     generated_at: datetime
     language: str | None = Field(default=None, description="Spoken language (ISO-639-1).")
-    chapters: list[Chapter] = Field(default_factory=list)
+    chapters: list[Chapter] = Field(default_factory=list, max_length=MAX_CHAPTERS)
     warnings: list[str] = Field(
         default_factory=list,
         description="Non-fatal issues, e.g. a chapter the model did not title.",

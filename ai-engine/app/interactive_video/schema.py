@@ -19,7 +19,7 @@ from datetime import datetime
 from pydantic import BaseModel, Field, model_validator
 
 from ..assessment.schema import Question
-from ..chaptering.schema import Chapter
+from ..chaptering.schema import MAX_CHAPTERS, Chapter
 from ..transcription.schema import TranscriptSource
 
 #: The container formats H5P.Video 1.6 plays natively. A source outside this set
@@ -65,7 +65,7 @@ class InteractiveVideoSpec(BaseModel):
     video: VideoSource
     title: str = Field(description="Shown on the video's start screen.")
     language: str = Field(default="en", description="BCP-47 tag for the package manifest.")
-    chapters: list[Chapter] = Field(default_factory=list)
+    chapters: list[Chapter] = Field(default_factory=list, max_length=MAX_CHAPTERS)
     checks: list[ChapterCheck] = Field(default_factory=list)
     generated_at: datetime | None = None
     warnings: list[str] = Field(default_factory=list)

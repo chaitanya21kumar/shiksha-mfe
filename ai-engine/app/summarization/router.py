@@ -21,10 +21,9 @@ from typing import Annotated
 import httpx
 from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile
 
-from ..config import settings
 from ..ingestion.schema import ParsedDocument
 from ..ingestion.service import parse_upload
-from .pipeline import GenerationConfig, generate_insights
+from .pipeline import generation_config, generate_insights
 from .schema import DocumentInsights
 
 router = APIRouter(tags=["summarization"])
@@ -44,24 +43,13 @@ def get_llm_client(request: Request) -> httpx.AsyncClient:
     return client
 
 
-def _generation_config() -> GenerationConfig:
-    return GenerationConfig(
-        base_url=settings.llm_base_url,
-        api_key=settings.llm_api_key,
-        model=settings.llm_model,
-        provider=settings.llm_provider,
-        temperature=settings.llm_temperature,
-        max_source_chars=settings.max_source_chars,
-    )
-
-
 @router.post("/summarize", responses=_ERROR_RESPONSES)
 async def summarize(
     document: ParsedDocument,
     client: Annotated[httpx.AsyncClient, Depends(get_llm_client)],
 ) -> DocumentInsights:
     """Derive insights from an already-parsed document."""
-    return await generate_insights(client, document, _generation_config())
+    return await generate_insights(client, document, generation_config())
 
 
 @router.post("/summarize/file", responses={**_ERROR_RESPONSES, 415: {"description": "Unsupported file type"}})
@@ -71,4 +59,4 @@ async def summarize_file(
 ) -> DocumentInsights:
     """Parse an uploaded document and derive insights in one call."""
     document = await parse_upload(file)
-    return await generate_insights(client, document, _generation_config())
+    return await generate_insights(client, document, generation_config())

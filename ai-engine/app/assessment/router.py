@@ -27,11 +27,10 @@ from typing import Annotated
 import httpx
 from fastapi import APIRouter, Depends, File, Query, Response, UploadFile
 
-from ..config import settings
 from ..packaging.response import ZIP_MEDIA_TYPE, package_response
 from ..ingestion.schema import ParsedDocument
 from ..ingestion.service import parse_upload
-from ..summarization.pipeline import GenerationConfig
+from ..summarization.pipeline import generation_config
 from ..summarization.router import get_llm_client
 from .emit import emit_h5p, emit_scorm
 from .pipeline import ALL_TYPES, QuestionType, generate_assessment
@@ -60,17 +59,6 @@ _PASS_QUERY = Query(
 )
 
 
-def _generation_config() -> GenerationConfig:
-    return GenerationConfig(
-        base_url=settings.llm_base_url,
-        api_key=settings.llm_api_key,
-        model=settings.llm_model,
-        provider=settings.llm_provider,
-        temperature=settings.llm_temperature,
-        max_source_chars=settings.max_source_chars,
-    )
-
-
 def _resolve_types(question_types: list[QuestionType] | None) -> list[QuestionType]:
     """Default to every type, and drop duplicates while keeping request order."""
     return list(dict.fromkeys(question_types or ALL_TYPES))
@@ -89,7 +77,7 @@ async def assess(
     return await generate_assessment(
         client,
         document,
-        _generation_config(),
+        generation_config(),
         question_types=_resolve_types(question_types),
         count=count,
         language=language,
@@ -114,7 +102,7 @@ async def assess_file(
     return await generate_assessment(
         client,
         document,
-        _generation_config(),
+        generation_config(),
         question_types=_resolve_types(question_types),
         count=count,
         language=language,
@@ -174,7 +162,7 @@ async def assess_h5p_file(
     assessment = await generate_assessment(
         client,
         document,
-        _generation_config(),
+        generation_config(),
         question_types=_resolve_types(question_types),
         count=count,
         language=language,
@@ -234,7 +222,7 @@ async def assess_scorm_file(
     assessment = await generate_assessment(
         client,
         document,
-        _generation_config(),
+        generation_config(),
         question_types=_resolve_types(question_types),
         count=count,
         language=language,

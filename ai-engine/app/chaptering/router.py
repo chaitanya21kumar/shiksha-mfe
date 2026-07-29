@@ -20,7 +20,7 @@ import httpx
 from fastapi import APIRouter, Depends, File, UploadFile
 
 from ..config import settings
-from ..summarization.pipeline import GenerationConfig
+from ..summarization.pipeline import generation_config
 from ..summarization.router import get_llm_client
 from ..transcription.pipeline import TranscriptionConfig
 from ..transcription.router import get_stt_client
@@ -36,17 +36,6 @@ _ERROR_RESPONSES = {
     503: {"description": "A model gateway is unreachable, rejected the key, or is rate-limited"},
     504: {"description": "Generation timed out"},
 }
-
-
-def _generation_config() -> GenerationConfig:
-    return GenerationConfig(
-        base_url=settings.llm_base_url,
-        api_key=settings.llm_api_key,
-        model=settings.llm_model,
-        provider=settings.llm_provider,
-        temperature=settings.llm_temperature,
-        max_source_chars=settings.max_source_chars,
-    )
 
 
 def _transcription_config() -> TranscriptionConfig:
@@ -65,7 +54,7 @@ async def chapter(
     client: Annotated[httpx.AsyncClient, Depends(get_llm_client)],
 ) -> ChapteredTranscript:
     """Divide an already-transcribed recording into titled chapters."""
-    return await generate_chapters(client, transcript, _generation_config())
+    return await generate_chapters(client, transcript, generation_config())
 
 
 @router.post(
@@ -83,4 +72,4 @@ async def chapter_file(
 ) -> ChapteredTranscript:
     """Transcribe an uploaded recording and divide it into chapters in one call."""
     transcript = await transcribe_upload(file, _transcription_config(), stt_client)
-    return await generate_chapters(llm_client, transcript, _generation_config())
+    return await generate_chapters(llm_client, transcript, generation_config())

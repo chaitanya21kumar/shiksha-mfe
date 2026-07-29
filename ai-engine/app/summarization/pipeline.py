@@ -196,3 +196,21 @@ async def generate_insights(
         outline=outline.outline if outline else [],
         warnings=warnings,
     )
+
+
+def generation_config() -> GenerationConfig:
+    """The generation settings every router hands to the pipelines.
+
+    One definition rather than one per router: five identical copies is five places
+    a new setting has to be remembered, and four of them will be missed.
+    """
+    from ..config import settings
+
+    return GenerationConfig(
+        base_url=settings.llm_base_url,
+        api_key=settings.llm_api_key,
+        model=settings.llm_model,
+        provider=settings.llm_provider,
+        temperature=settings.llm_temperature,
+        max_source_chars=settings.max_source_chars,
+    )

@@ -26,7 +26,7 @@ from ..summarization.llm_client import LLMBadResponse, chat_json
 from ..summarization.pipeline import GenerationConfig
 from ..transcription.schema import Transcript, TranscriptSegment
 from . import prompts
-from .schema import Chapter, ChapteredTranscript
+from .schema import MAX_CHAPTERS, MAX_TITLE_CHARS, Chapter, ChapteredTranscript
 
 logger = logging.getLogger("ai_engine.chaptering")
 
@@ -42,8 +42,9 @@ _OVERSHOOT = 1.6
 #: A trailing chapter shorter than this is folded into the one before it rather
 #: than left as a stub in the navigation bar.
 _MIN_TAIL_SECONDS = 25.0
-#: Upper bound on chapters, which also bounds the single titling call.
-_MAX_CHAPTERS = 24
+#: Upper bound on chapters, which also bounds the single titling call. Declared on
+#: the contract, so a hand-built request body is held to the same limit.
+_MAX_CHAPTERS = MAX_CHAPTERS
 
 
 class EmptyTranscriptError(Exception):
@@ -198,7 +199,7 @@ async def _titles(
 def _clean_title(title: str) -> str:
     """Normalise a returned title: one line, no trailing stop, bounded length."""
     cleaned = " ".join(title.split()).rstrip(" .;:—-")
-    return cleaned[:120]
+    return cleaned[:MAX_TITLE_CHARS]
 
 
 async def generate_chapters(
