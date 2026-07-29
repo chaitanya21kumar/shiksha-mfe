@@ -211,3 +211,56 @@ def test_gateway_failures_propagate():
 
     with pytest.raises(LLMUnavailable):
         _run(unreachable, _transcript(_speech(4)))
+
+
+# --- input the provider is not obliged to give us in order --------------------
+
+
+def test_out_of_order_segments_are_sorted_rather_than_crashing_the_contract():
+    # Nothing in the Transcript contract forbids segments that are out of order,
+    # and Whisper does emit repeat/rewind cues on looping audio. A backwards
+    # segment used to build a chapter with end < start, which the ChapteredTranscript
+    # contract rightly refuses — reaching the caller as an unhandled 500.
+    segments = [
+        TranscriptSegment(index=1, start=100.0, end=145.0, text="second half"),
+        TranscriptSegment(index=2, start=0.0, end=95.0, text="first half"),
+    ]
+    result = _run(_titles_handler(), _transcript(segments))
+    assert [c.start for c in result.chapters] == sorted(c.start for c in result.chapters)
+    assert all(c.end >= c.start for c in result.chapters)
+    assert any("not in time order" in w for w in result.warnings)
+
+
+def test_overlapping_segments_do_not_produce_overlapping_chapters():
+    segments = [
+        TranscriptSegment(index=1, start=0.0, end=145.0, text="a long stretch"),
+        TranscriptSegment(index=2, start=50.0, end=100.0, text="a repeated cue"),
+    ]
+    result = _run(_titles_handler(), _transcript(segments))
+    previous = None
+    for chapter in result.chapters:
+        assert chapter.end >= chapter.start
+        if previous is not None:
+            assert chapter.start >= previous
+        previous = chapter.end
+
+
+def test_a_single_unbroken_segment_says_so_instead_of_pretending_to_chapter():
+    # Boundaries can only fall *between* segments, so a provider that returns one
+    # segment for a whole recording cannot be split at all — and a lone chapter
+    # covering an hour should not look like a considered decision.
+    segments = [TranscriptSegment(index=1, start=0.0, end=3600.0, text="one long stretch")]
+    result = _run(_titles_handler(), _transcript(segments))
+    assert len(result.chapters) == 1
+    assert any("single chapter" in w for w in result.warnings)
+
+
+def test_a_title_failure_is_reported_on_one_line_so_it_survives_a_header():
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200, json={"choices": [{"message": {"content": '{"chapters": [{"index": "one"}]}'}}]}
+        )
+
+    result = _run(handler, _transcript(_speech(30)))
+    failures = [w for w in result.warnings if w.startswith("Could not generate chapter titles")]
+    assert failures and all("\n" not in w for w in failures)

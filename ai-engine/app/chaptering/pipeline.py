@@ -58,11 +58,14 @@ class _Span:
 
     @property
     def start(self) -> float:
-        return self.segments[0].start
+        # min/max rather than first/last: a provider can return a segment whose end
+        # runs past the next one's start (Whisper does it on repeated audio), and a
+        # span with end < start is a chapter the contract rightly refuses.
+        return min(segment.start for segment in self.segments)
 
     @property
     def end(self) -> float:
-        return self.segments[-1].end
+        return max(segment.end for segment in self.segments)
 
     @property
     def duration(self) -> float:
@@ -126,7 +129,24 @@ def _split_into_spans(segments: list[TranscriptSegment], target: float) -> list[
 
     if current:
         spans.append(_Span(current))
-    return _merge_short_tail(spans)
+    return _merge_short_tail(_merge_overlaps(spans))
+
+
+def _merge_overlaps(spans: list[_Span]) -> list[_Span]:
+    """Fold any span that starts before the previous one ended into it.
+
+    Sorting fixes segments that arrive out of order, but not one *nested* inside
+    another — a repeated cue covering 50–100s inside a 0–145s stretch sorts first
+    and still yields a chapter that begins in the middle of the one before it.
+    Chapters must run forwards, so overlapping spans are one chapter, not two.
+    """
+    merged: list[_Span] = []
+    for span in spans:
+        if merged and span.start < merged[-1].end:
+            merged[-1] = _Span(merged[-1].segments + span.segments)
+        else:
+            merged.append(span)
+    return merged
 
 
 def _merge_short_tail(spans: list[_Span]) -> list[_Span]:
@@ -167,7 +187,10 @@ async def _titles(
         parsed = _TitleResponse.model_validate(raw)
     except (LLMBadResponse, ValidationError) as exc:
         logger.warning("Could not generate chapter titles: %s", exc)
-        warnings.append(f"Could not generate chapter titles: {exc}")
+        # A pydantic error renders over several lines and quotes the model's own
+        # reply. Collapsed to one line: this becomes a warning, and a warning is
+        # read in a response header as often as in a JSON body.
+        warnings.append(f"Could not generate chapter titles: {' '.join(str(exc).split())}")
         return {}
     return {item.index: item.title.strip() for item in parsed.chapters}
 
@@ -182,13 +205,32 @@ async def generate_chapters(
     client: httpx.AsyncClient, transcript: Transcript, config: GenerationConfig
 ) -> ChapteredTranscript:
     """Divide a transcript into titled chapters."""
-    segments = [segment for segment in transcript.segments if segment.text.strip()]
-    if not segments:
+    spoken = [segment for segment in transcript.segments if segment.text.strip()]
+    if not spoken:
         raise EmptyTranscriptError("The transcript has no timed speech to divide into chapters.")
 
     warnings: list[str] = []
+    # Chapters must run forwards and must not overlap — the contract enforces it.
+    # Nothing guarantees a provider returns segments in time order, though, and an
+    # unordered one would otherwise reach that contract as an unhandled 500.
+    segments = sorted(spoken, key=lambda segment: (segment.start, segment.end))
+    if segments != spoken:
+        warnings.append(
+            "The transcript's segments were not in time order; they were sorted before "
+            "chaptering, so chapter boundaries may not match the provider's numbering."
+        )
+
     total = segments[-1].end - segments[0].start
-    spans = _split_into_spans(segments, _target_seconds(total))
+    target = _target_seconds(total)
+    spans = _split_into_spans(segments, target)
+    if len(spans) == 1 and spans[0].duration > target * _OVERSHOOT:
+        # Boundaries can only fall *between* segments, so a provider that returns
+        # one segment for a whole recording cannot be split at all. Say so rather
+        # than hand back a single chapter that looks like a considered decision.
+        warnings.append(
+            "The transcript has no segment boundaries within the target chapter length, "
+            "so the whole recording is a single chapter."
+        )
     numbered = [(number, span.text) for number, span in enumerate(spans, start=1)]
     titles = await _titles(client, config, numbered, warnings)
 
