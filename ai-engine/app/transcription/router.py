@@ -19,9 +19,8 @@ import httpx
 from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, UploadFile
 from fastapi.responses import PlainTextResponse
 
-from ..config import settings
 from .emit import to_srt, to_webvtt
-from .pipeline import TranscriptionConfig
+from .pipeline import transcription_config
 from .schema import Transcript
 from .service import transcribe_upload
 
@@ -43,16 +42,6 @@ def get_stt_client(request: Request) -> httpx.AsyncClient:
     return client
 
 
-def _transcription_config() -> TranscriptionConfig:
-    return TranscriptionConfig(
-        base_url=settings.stt_base_url,
-        api_key=settings.stt_api_key,
-        model=settings.stt_model,
-        provider=settings.stt_provider,
-        language=settings.stt_language,
-    )
-
-
 @router.post("/transcribe", responses=_ERROR_RESPONSES)
 async def transcribe_endpoint(
     file: Annotated[UploadFile, File()],
@@ -62,7 +51,7 @@ async def transcribe_endpoint(
     output_format: Annotated[Literal["json", "vtt", "srt"], Query(alias="format")] = "json",
 ):
     """Transcribe an uploaded media file into a transcript or a subtitle file."""
-    transcript: Transcript = await transcribe_upload(file, _transcription_config(), client)
+    transcript: Transcript = await transcribe_upload(file, transcription_config(), client)
     if output_format == "vtt":
         return PlainTextResponse(to_webvtt(transcript), media_type="text/vtt")
     if output_format == "srt":

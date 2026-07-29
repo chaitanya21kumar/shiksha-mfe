@@ -19,10 +19,9 @@ from typing import Annotated
 import httpx
 from fastapi import APIRouter, Depends, File, UploadFile
 
-from ..config import settings
 from ..summarization.pipeline import generation_config
 from ..summarization.router import get_llm_client
-from ..transcription.pipeline import TranscriptionConfig
+from ..transcription.pipeline import transcription_config
 from ..transcription.router import get_stt_client
 from ..transcription.schema import Transcript
 from ..transcription.service import transcribe_upload
@@ -36,16 +35,6 @@ _ERROR_RESPONSES = {
     503: {"description": "A model gateway is unreachable, rejected the key, or is rate-limited"},
     504: {"description": "Generation timed out"},
 }
-
-
-def _transcription_config() -> TranscriptionConfig:
-    return TranscriptionConfig(
-        base_url=settings.stt_base_url,
-        api_key=settings.stt_api_key,
-        model=settings.stt_model,
-        provider=settings.stt_provider,
-        language=settings.stt_language,
-    )
 
 
 @router.post("/chapter", responses=_ERROR_RESPONSES)
@@ -71,5 +60,5 @@ async def chapter_file(
     llm_client: Annotated[httpx.AsyncClient, Depends(get_llm_client)],
 ) -> ChapteredTranscript:
     """Transcribe an uploaded recording and divide it into chapters in one call."""
-    transcript = await transcribe_upload(file, _transcription_config(), stt_client)
+    transcript = await transcribe_upload(file, transcription_config(), stt_client)
     return await generate_chapters(llm_client, transcript, generation_config())

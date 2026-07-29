@@ -141,3 +141,20 @@ async def transcribe(
         full_text=full_text,
         warnings=warnings,
     )
+
+
+def transcription_config() -> TranscriptionConfig:
+    """The speech-to-text settings every router hands to the pipeline.
+
+    The audio sibling of `generation_config`, and here for the same reason: three
+    byte-identical copies is three places a new setting has to be remembered.
+    """
+    from ..config import settings
+
+    return TranscriptionConfig(
+        base_url=settings.stt_base_url,
+        api_key=settings.stt_api_key,
+        model=settings.stt_model,
+        provider=settings.stt_provider,
+        language=settings.stt_language,
+    )

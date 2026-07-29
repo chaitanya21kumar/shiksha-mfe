@@ -27,11 +27,10 @@ from pydantic import ValidationError
 from ..assessment.pipeline import ALL_TYPES, QuestionType
 from ..chaptering.pipeline import generate_chapters
 from ..chaptering.schema import ChapteredTranscript
-from ..config import settings
 from ..packaging.response import ZIP_MEDIA_TYPE, package_response
 from ..summarization.pipeline import generation_config
 from ..summarization.router import get_llm_client
-from ..transcription.pipeline import TranscriptionConfig
+from ..transcription.pipeline import transcription_config
 from ..transcription.router import get_stt_client
 from ..transcription.service import transcribe_upload
 from .emit import emit_interactive_video
@@ -70,16 +69,6 @@ _TYPES_QUERY = Query(
 _TITLE_QUERY = Query(description="Shown on the video's start screen.")
 _COUNT_QUERY = Query(ge=1, le=5, description="Questions per type, per chapter.")
 _LANGUAGE_QUERY = Query(description="BCP-47 tag for the package.")
-
-
-def _transcription_config() -> TranscriptionConfig:
-    return TranscriptionConfig(
-        base_url=settings.stt_base_url,
-        api_key=settings.stt_api_key,
-        model=settings.stt_model,
-        provider=settings.stt_provider,
-        language=settings.stt_language,
-    )
 
 
 def _resolve_types(requested: list[QuestionType] | None) -> list[QuestionType]:
@@ -166,7 +155,7 @@ async def interactive_video_file(
     """Transcribe, chapter, question and package a recording in one call."""
     options = _options(file.filename or "interactive-video", title, question_types, count, language)
     source = _video_source(video_url)
-    transcript = await transcribe_upload(file, _transcription_config(), stt_client)
+    transcript = await transcribe_upload(file, transcription_config(), stt_client)
     chaptered = await generate_chapters(llm_client, transcript, generation_config())
     spec = await build_interactive_video(
         llm_client, chaptered, source, generation_config(), options
