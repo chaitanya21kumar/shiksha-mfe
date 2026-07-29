@@ -222,7 +222,16 @@ async def chat_json_for(
     real fault behind a slower one.
 
     With no fallback configured this is exactly `chat_json`, which is the default.
+
+    When one *is* configured the primary gets a single attempt rather than five.
+    Retrying exists to outlast a cool-down when there is nowhere else to go; with a
+    second gateway standing by, every retry is a minute of waiting to reach a
+    conclusion already available. Measured on an exhausted free tier: the same
+    request went from 86 seconds to a handful.
     """
+    fallback_url = getattr(config, "fallback_base_url", "")
+    fallback_key = getattr(config, "fallback_api_key", "")
+    has_fallback = bool(fallback_url and fallback_key)
     try:
         return await chat_json(
             client,
@@ -232,11 +241,10 @@ async def chat_json_for(
             system=system,
             user=user,
             temperature=config.temperature,
+            max_retries=0 if has_fallback else _MAX_RETRIES,
         )
     except LLMUnavailable:
-        fallback_url = getattr(config, "fallback_base_url", "")
-        fallback_key = getattr(config, "fallback_api_key", "")
-        if not (fallback_url and fallback_key):
+        if not has_fallback:
             raise
         logger.warning(
             "Primary gateway unavailable; falling back to %s", fallback_url

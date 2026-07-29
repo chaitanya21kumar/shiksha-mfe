@@ -254,3 +254,37 @@ def test_with_no_useful_headers_it_falls_back_to_backoff():
 
     assert _retry_after(_resp(), 0) < 5.0
     assert _retry_after(_resp(), 3) > _retry_after(_resp(), 0)
+
+
+def test_the_primary_is_not_retried_when_a_fallback_can_serve_now():
+    # Retrying exists to outlast a cool-down when there is nowhere else to go. With
+    # a second gateway configured, each retry is a minute spent reaching a
+    # conclusion already available — measured at 86s versus 7s on a spent free tier.
+    attempts = {"primary": 0, "fallback": 0}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if "primary" in str(request.url):
+            attempts["primary"] += 1
+            return httpx.Response(429, headers={"retry-after": "30"}, json={"error": "tpd"})
+        attempts["fallback"] += 1
+        return httpx.Response(200, json={"choices": [{"message": {"content": '{"ok": 1}'}}]})
+
+    config = _Cfg(fallback_base_url="https://second.test/v1", fallback_api_key="k2")
+    assert _run(config, handler) == {"ok": 1}
+    assert attempts["primary"] == 1, f"primary tried {attempts['primary']} times, should be once"
+    assert attempts["fallback"] == 1
+
+
+def test_without_a_fallback_the_primary_is_still_retried():
+    # The retry budget is what keeps a single-gateway deployment working through a
+    # short cool-down; removing it everywhere would trade one problem for another.
+    attempts = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        attempts.append(1)
+        if len(attempts) < 3:
+            return httpx.Response(429, headers={"retry-after": "0.1"}, json={"error": "tpm"})
+        return httpx.Response(200, json={"choices": [{"message": {"content": "{}"}}]})
+
+    assert _run(_Cfg(), handler) == {}
+    assert len(attempts) == 3
