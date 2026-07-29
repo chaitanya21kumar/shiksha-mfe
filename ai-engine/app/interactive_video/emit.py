@@ -41,6 +41,8 @@ labels by string concatenation into the DOM.
 
 from __future__ import annotations
 
+import math
+
 from ..assessment.emit.h5p import UnrenderableQuestion, build_question_subcontent
 from ..packaging.h5p import (
     ALLOWED_INTERACTION_LIBRARIES,
@@ -156,6 +158,17 @@ _L10N: dict[str, str] = {
 }
 
 
+def _floor2(seconds: float) -> float:
+    """Two decimals, always rounded **down**.
+
+    Ordinary rounding is not safe for a time that must not exceed the media: a
+    185.857-second recording rounds to 185.86, which is 3 ms *past* the end — and
+    the runtime's ``duration.to > t`` test fires on exactly that. Times are only
+    ever shortened here, never lengthened.
+    """
+    return math.floor(seconds * 100) / 100
+
+
 def _timeline_end(spec: InteractiveVideoSpec) -> float:
     """How long the media is, as far as this package can tell.
 
@@ -181,7 +194,7 @@ def _bookmarks(spec: InteractiveVideoSpec, limit: float) -> list[dict[str, objec
     """
     return [
         {
-            "time": round(max(min(chapter.start, limit), 0.0), 2),
+            "time": _floor2(max(min(chapter.start, limit), 0.0)),
             "label": escape_text(chapter.title),
         }
         for chapter in spec.chapters
@@ -197,7 +210,7 @@ def _endscreens(limit: float) -> list[dict[str, object]]:
     the media length to the duration and rewrites the label, so a value at the
     very end is safe on a recording of any length.
     """
-    return [{"time": round(max(limit, 0.0), 2), "label": "Submit screen"}]
+    return [{"time": _floor2(max(limit, 0.0)), "label": "Submit screen"}]
 
 
 def _placement(order: int) -> tuple[float, float]:
@@ -214,7 +227,7 @@ def _placement(order: int) -> tuple[float, float]:
 
 def _appears_at(chapter_end: float, limit: float) -> float:
     """When a check appears: the chapter's end, kept clear of the final frame."""
-    return round(max(min(chapter_end, limit - _END_MARGIN), 0.0), 2)
+    return _floor2(max(min(chapter_end, limit - _END_MARGIN), 0.0))
 
 
 def _window_end(at: float, limit: float) -> float:
@@ -231,7 +244,7 @@ def _window_end(at: float, limit: float) -> float:
     recording shorter than the checks' combined windows, every check is dragged
     onto the same instant. Bounding ``to`` here means that branch never runs.
     """
-    return round(min(at + _INTERACTION_WINDOW, limit), 2)
+    return _floor2(min(at + _INTERACTION_WINDOW, limit))
 
 
 def _interaction(

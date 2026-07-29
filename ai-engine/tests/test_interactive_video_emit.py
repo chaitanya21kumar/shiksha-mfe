@@ -398,3 +398,18 @@ def test_an_interaction_window_never_runs_past_the_end_of_the_media():
     assert all(i["duration"]["to"] <= 90.0 for i in interactions)
     # …and each window is still wide enough for the playhead to enter it.
     assert all(i["duration"]["to"] > i["duration"]["from"] for i in interactions)
+
+
+def test_times_are_floored_so_rounding_cannot_push_them_past_the_media():
+    # A 185.857-second recording rounds to 185.86 — 3 ms past the end, which is
+    # exactly what the runtime's `duration.to > t` test fires on.
+    spec = _spec(
+        source=TranscriptSource(filename="lecture.mp4", media_seconds=185.85693324800002),
+        chapters=[Chapter(index=1, start=0.0, end=185.85693324800002, title="Only")],
+        checks=[ChapterCheck(chapter_index=1, questions=[_mcq()])],
+    )
+    content = _content(emit_interactive_video(spec))["interactiveVideo"]["assets"]
+    media = 185.85693324800002
+    assert content["interactions"][0]["duration"]["to"] <= media
+    assert content["endscreens"][0]["time"] <= media
+    assert all(b["time"] <= media for b in content["bookmarks"])
