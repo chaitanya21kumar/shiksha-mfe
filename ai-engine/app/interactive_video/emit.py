@@ -217,8 +217,25 @@ def _appears_at(chapter_end: float, limit: float) -> float:
     return round(max(min(chapter_end, limit - _END_MARGIN), 0.0), 2)
 
 
+def _window_end(at: float, limit: float) -> float:
+    """When the check stops being reachable, never past the end of the media.
+
+    This is not cosmetic. ``H5P.InteractiveVideo.loaded`` does, for any interaction
+    whose ``duration.to`` exceeds the real media length::
+
+        s = to - from;  from = max(t - s, 0);  to = t
+
+    — it *preserves the window* and drags the **start backwards**. A check placed at
+    the end of the last chapter of a 10-minute lecture would be moved 20 seconds
+    earlier, into material the learner has not been questioned on yet; on a
+    recording shorter than the checks' combined windows, every check is dragged
+    onto the same instant. Bounding ``to`` here means that branch never runs.
+    """
+    return round(min(at + _INTERACTION_WINDOW, limit), 2)
+
+
 def _interaction(
-    action: dict[str, object], *, at: float, order: int, label: str
+    action: dict[str, object], *, at: float, limit: float, order: int, label: str
 ) -> dict[str, object]:
     """One knowledge check on the timeline, in the shape H5P's own content uses."""
     x, y = _placement(order)
@@ -228,7 +245,7 @@ def _interaction(
         "y": y,
         "width": 10,
         "height": 10,
-        "duration": {"from": at, "to": round(at + _INTERACTION_WINDOW, 2)},
+        "duration": {"from": at, "to": _window_end(at, limit)},
         # Pause so the learner answers rather than the question sliding past.
         "pause": True,
         "displayType": "button",
@@ -264,7 +281,7 @@ def _interactions(
             order = order_at.get(at, 0)
             order_at[at] = order + 1
             built.append(
-                _interaction(action, at=at, order=order, label=_label(question))
+                _interaction(action, at=at, limit=limit, order=order, label=_label(question))
             )
     return built
 

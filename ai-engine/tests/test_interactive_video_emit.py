@@ -10,8 +10,6 @@ own controls.
 import io
 import json
 import zipfile
-from datetime import datetime, timezone
-
 import pytest
 from pydantic import ValidationError
 
@@ -240,3 +238,163 @@ def test_summary_is_omitted_because_the_runtime_guards_it():
 
 def test_the_package_is_byte_reproducible():
     assert emit_interactive_video(_spec()).content == emit_interactive_video(_spec()).content
+
+
+# --- the fields whose absence fails silently in the player --------------------
+
+
+def test_text_tracks_is_emitted_even_though_it_is_empty():
+    # The constructor merges its default with a SHALLOW $.extend, so writing the
+    # `video` object at all replaces `{textTracks: {videoTrack: []}}` wholesale —
+    # and the last line of getCopyrights dereferences it with no guard, which H5P
+    # core calls whenever the rights dialog is built.
+    video = _content(emit_interactive_video(_spec()))["interactiveVideo"]["video"]
+    assert video["textTracks"] == {"videoTrack": []}
+
+
+def test_an_endscreen_is_emitted_so_the_learner_can_submit():
+    # hasStar = editor || undefined !== assets.endscreens && assets.endscreens.length
+    # With no endscreen the star, the end card and the submit button are dead code.
+    assets = _content(emit_interactive_video(_spec()))["interactiveVideo"]["assets"]
+    assert len(assets["endscreens"]) == 1
+    assert assets["endscreens"][0]["time"] == 300.0
+
+
+def test_the_endcard_l10n_strings_are_present_because_the_runtime_omits_them():
+    # The runtime's own $.extend defaults 38 of the 47 keys; the twelve endcard
+    # strings are not in that block, and they are exactly what the submit path
+    # above puts on screen.
+    l10n = _content(emit_interactive_video(_spec()))["l10n"]
+    for key in (
+        "endcardTitle", "endcardInformation", "endcardSubmitButton",
+        "endcardSubmitMessage", "endcardTableRowAnswered", "endcardTableRowScore",
+        "endcardAnsweredScore", "endcardInformationNoAnswers",
+        "endcardInformationMustHaveAnswer", "endcardInformationOnSubmitButtonDisabled",
+        "endCardTableRowSummaryWithScore", "endCardTableRowSummaryWithoutScore",
+    ):
+        assert l10n[key], f"{key} is one of the twelve the runtime does not default"
+
+
+# --- model-written text is markup by the time H5P renders it ------------------
+
+
+def test_a_chapter_title_is_escaped_before_it_becomes_a_bookmark_label():
+    # addBookmark builds '<div class="h5p-bookmark-text">' + label + '</div>'.
+    spec = _spec(chapters=[
+        Chapter(index=1, start=0.0, end=90.0, title='Water <img src=x onerror=alert(1)> & ions'),
+    ], checks=[])
+    label = _content(emit_interactive_video(spec))["interactiveVideo"]["assets"]["bookmarks"][0]["label"]
+    assert "<img" not in label
+    assert "&lt;img" in label and "&amp; ions" in label
+
+
+def test_a_question_prompt_is_escaped_before_it_becomes_an_interaction_label():
+    question = _mcq()
+    question.prompt = "Is a < b <script>alert(1)</script>?"
+    spec = _spec(checks=[ChapterCheck(chapter_index=1, questions=[question])])
+    label = _content(emit_interactive_video(spec))["interactiveVideo"]["assets"]["interactions"][0]["label"]
+    assert "<script>" not in label
+    assert "&lt;script&gt;" in label
+
+
+# --- placement, when the timeline does not agree with the chapters ------------
+
+
+def test_the_last_chapters_check_is_reachable_when_the_media_length_is_unknown():
+    # media_seconds is optional: an OpenAI-compatible STT gateway need not report
+    # a duration. The final chapter's end IS the end of the recording, so without
+    # a margin its check appears on the last frame and is never reachable.
+    spec = _spec(
+        source=TranscriptSource(filename="lecture.mp4", media_seconds=None),
+        chapters=[Chapter(index=1, start=0.0, end=60.0, title="Only chapter")],
+        checks=[ChapterCheck(chapter_index=1, questions=[_mcq()])],
+    )
+    at = _content(emit_interactive_video(spec))["interactiveVideo"]["assets"]["interactions"][0]
+    assert at["duration"]["from"] == 59.0
+
+
+def test_chapters_running_past_the_media_are_warned_about_not_silently_collapsed():
+    # The transcribed upload and the streamed URL are two different files, which
+    # the two-parameter endpoint openly invites.
+    spec = _spec(
+        source=TranscriptSource(filename="lecture.mp4", media_seconds=10.0),
+        chapters=[
+            Chapter(index=1, start=0.0, end=90.0, title="One"),
+            Chapter(index=2, start=90.0, end=180.0, title="Two"),
+        ],
+        checks=[
+            ChapterCheck(chapter_index=1, questions=[_mcq("q1")]),
+            ChapterCheck(chapter_index=2, questions=[_mcq("q2")]),
+        ],
+    )
+    package = emit_interactive_video(spec)
+    assert any("run to 180.0s" in w and "10.0s" in w for w in package.warnings)
+    content = _content(package)["interactiveVideo"]["assets"]
+    # Marks past the end are unreachable, so they are pulled back too.
+    assert all(b["time"] <= 10.0 for b in content["bookmarks"])
+    # Both checks clamp to the same instant, so their buttons must NOT coincide.
+    spots = {(i["x"], i["y"]) for i in content["interactions"]}
+    assert len(spots) == len(content["interactions"])
+
+
+def test_buttons_wrap_onto_rows_instead_of_stacking_past_the_fifth():
+    # count=5 x three types on a single-chapter recording is fifteen questions on
+    # one instant; clamping x at _MAX_X put every one past the fifth on one spot.
+    questions = [_mcq(f"q{i}") for i in range(1, 16)]
+    spec = _spec(
+        chapters=[Chapter(index=1, start=0.0, end=90.0, title="One")],
+        checks=[ChapterCheck(chapter_index=1, questions=questions)],
+    )
+    interactions = _content(emit_interactive_video(spec))["interactiveVideo"]["assets"]["interactions"]
+    assert len(interactions) == 15
+    spots = {(i["x"], i["y"]) for i in interactions}
+    assert len(spots) == 15, "every button must have its own place on the frame"
+
+
+# --- the filename crosses into a header --------------------------------------
+
+
+def test_a_non_ascii_source_filename_cannot_reach_the_content_disposition_header():
+    # Starlette latin-1-encodes header values, so an unsanitised Hindi filename
+    # raised UnicodeEncodeError *after* the package had been built successfully.
+    spec = _spec(source=TranscriptSource(filename="व्याख्यान.mp4", media_seconds=300.0))
+    filename = emit_interactive_video(spec).filename
+    filename.encode("latin-1")  # must not raise
+    assert filename == "interactive-video-interactive-video.h5p"
+
+
+def test_a_filename_carrying_crlf_or_quotes_is_reduced_to_something_a_header_can_hold():
+    spec = _spec(source=TranscriptSource(filename='a"; x="b\r\nX-Evil: 1.mp4', media_seconds=300.0))
+    filename = emit_interactive_video(spec).filename
+    assert '"' not in filename and "\r" not in filename and "\n" not in filename
+
+
+def test_a_fill_blank_button_is_labelled_with_its_sentence_not_its_id():
+    # `prompt` is optional on a fill-in-the-blanks question — the sentence carries
+    # the instruction — so falling straight through to "Question q2" would put an
+    # id on the learner's screen.
+    spec = _spec(checks=[ChapterCheck(chapter_index=1, questions=[_blank()])])
+    label = _content(emit_interactive_video(spec))["interactiveVideo"]["assets"]["interactions"][0]["label"]
+    assert label.startswith("Vapour cools during")
+
+
+def test_an_interaction_window_never_runs_past_the_end_of_the_media():
+    # InteractiveVideo.loaded rewrites any interaction whose duration.to exceeds
+    # the real media length by PRESERVING the window and dragging `from`
+    # backwards — so an unbounded `to` moves the check into earlier material.
+    spec = _spec(
+        source=TranscriptSource(filename="lecture.mp4", media_seconds=90.0),
+        chapters=[
+            Chapter(index=1, start=0.0, end=30.0, title="One"),
+            Chapter(index=2, start=30.0, end=60.0, title="Two"),
+            Chapter(index=3, start=60.0, end=90.0, title="Three"),
+        ],
+        checks=[
+            ChapterCheck(chapter_index=i, questions=[_mcq(f"q{i}")]) for i in (1, 2, 3)
+        ],
+    )
+    interactions = _content(emit_interactive_video(spec))["interactiveVideo"]["assets"]["interactions"]
+    assert [i["duration"]["from"] for i in interactions] == [30.0, 60.0, 89.0]
+    assert all(i["duration"]["to"] <= 90.0 for i in interactions)
+    # …and each window is still wide enough for the playhead to enter it.
+    assert all(i["duration"]["to"] > i["duration"]["from"] for i in interactions)
