@@ -21,7 +21,7 @@ from typing import Any
 
 import httpx
 
-from .ratelimit import governor, parse_duration
+from .ratelimit import _LOW_TOKENS, governor, parse_duration
 
 logger = logging.getLogger("ai_engine.llm")
 
@@ -139,17 +139,38 @@ def _cooldown_exceeds_patience(response: httpx.Response) -> bool:
 def _retry_after(response: httpx.Response, attempt: int) -> float:
     """How long to wait before retrying a rate-limited request.
 
-    Three sources, in order of authority: the standard ``Retry-After``, the
-    gateway's own statement of when the token window turns over, and finally
-    exponential backoff. Taking the *longest* of what is known, because retrying
-    early on a token limit simply spends another attempt on the same refusal.
+    ``Retry-After`` is authoritative when the gateway sends it — it is the server
+    saying how long it needs, and it already accounts for whichever budget ran out.
+    Only when it is absent do we infer the wait, and then from the reset header for
+    the budget that is actually spent.
+
+    The header for a budget that is *not* spent must be ignored. A daily request
+    counter reports the time until midnight-equivalent whether or not requests are
+    the problem, and folding that into the wait made every token-limited retry sit
+    for the full ceiling — a six-second cool-down became sixty-five.
     """
-    waits = [_BASE_BACKOFF * (2**attempt)]
-    for header in ("retry-after", "x-ratelimit-reset-tokens", "x-ratelimit-reset-requests"):
-        value = parse_duration(response.headers.get(header, ""))
-        if value is not None:
-            waits.append(value + 0.5)  # a beat past the reset, not exactly on it
-    return min(max(waits), _MAX_RETRY_WAIT)
+    headers = response.headers
+    asked = parse_duration(headers.get("retry-after", ""))
+    if asked is not None:
+        return min(asked + 0.5, _MAX_RETRY_WAIT)
+
+    inferred: list[float] = []
+    for remaining_key, reset_key, floor in (
+        ("x-ratelimit-remaining-tokens", "x-ratelimit-reset-tokens", _LOW_TOKENS),
+        ("x-ratelimit-remaining-requests", "x-ratelimit-reset-requests", 1),
+    ):
+        try:
+            left = float(headers.get(remaining_key, ""))
+        except ValueError:
+            continue
+        if left >= floor:  # this budget is not the one that refused us
+            continue
+        window = parse_duration(headers.get(reset_key, ""))
+        if window is not None:
+            inferred.append(window + 0.5)
+
+    backoff = _BASE_BACKOFF * (2**attempt)
+    return min(max(inferred) if inferred else backoff, _MAX_RETRY_WAIT)
 
 
 def _status_error(exc: httpx.HTTPStatusError) -> LLMError:

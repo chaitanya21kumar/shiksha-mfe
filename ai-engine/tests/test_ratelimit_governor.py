@@ -116,8 +116,12 @@ def test_the_reset_header_is_honoured_when_there_is_no_retry_after():
     def handler(request: httpx.Request) -> httpx.Response:
         seen.append(1)
         if len(seen) == 1:
+            # A real token-limit 429 always states what is left as well as when
+            # it refills; the reset alone is not enough to know it is the culprit.
             return httpx.Response(
-                429, headers={"x-ratelimit-reset-tokens": "3s"}, json={"error": "tpm"}
+                429,
+                headers={"x-ratelimit-remaining-tokens": "12", "x-ratelimit-reset-tokens": "3s"},
+                json={"error": "tpm"},
             )
         return httpx.Response(200, json={"choices": [{"message": {"content": "{}"}}]})
 
@@ -203,3 +207,50 @@ def test_a_bad_reply_does_not_fail_over():
     with pytest.raises(LLMBadResponse):
         _run(config, handler)
     assert not any("second.test" in u for u in tried)
+
+
+# --- how long to wait, which is easy to get wrong in a way nothing notices ------
+
+
+def _resp(**headers) -> httpx.Response:
+    return httpx.Response(429, headers=httpx.Headers(headers))
+
+
+def test_retry_after_is_authoritative_when_the_gateway_sends_it():
+    from app.summarization.llm_client import _retry_after
+
+    # The regression: taking the longest of every reset header folded in
+    # x-ratelimit-reset-requests — the DAILY counter — which reports its window
+    # whether or not requests are what ran out. A six-second cool-down became
+    # sixty-five, on every retry, and the only symptom was a slow demo.
+    wait = _retry_after(
+        _resp(**{
+            "retry-after": "6",
+            "x-ratelimit-remaining-tokens": "3523", "x-ratelimit-reset-tokens": "24.77s",
+            "x-ratelimit-remaining-requests": "14240", "x-ratelimit-reset-requests": "16m0s",
+        }),
+        0,
+    )
+    assert 6.0 <= wait <= 7.0, f"waited {wait}s for a 6-second cool-down"
+
+
+def test_the_window_of_a_budget_that_is_not_spent_is_ignored():
+    from app.summarization.llm_client import _retry_after
+
+    # Tokens are gone, requests are plentiful: wait the token window, not the
+    # sixteen minutes until the daily request counter rolls over.
+    wait = _retry_after(
+        _resp(**{
+            "x-ratelimit-remaining-tokens": "40", "x-ratelimit-reset-tokens": "12s",
+            "x-ratelimit-remaining-requests": "9000", "x-ratelimit-reset-requests": "16m0s",
+        }),
+        0,
+    )
+    assert 12.0 <= wait <= 13.0
+
+
+def test_with_no_useful_headers_it_falls_back_to_backoff():
+    from app.summarization.llm_client import _retry_after
+
+    assert _retry_after(_resp(), 0) < 5.0
+    assert _retry_after(_resp(), 3) > _retry_after(_resp(), 0)
