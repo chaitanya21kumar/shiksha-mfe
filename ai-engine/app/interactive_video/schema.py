@@ -79,9 +79,30 @@ class InteractiveVideoSpec(BaseModel):
         refuses it instead of guessing.
         """
         known = {chapter.index for chapter in self.chapters}
+        seen_chapters: set[int] = set()
         for check in self.checks:
             if check.chapter_index not in known:
                 raise ValueError(
                     f"check refers to chapter {check.chapter_index}, which is not in this video"
                 )
+            if check.chapter_index in seen_chapters:
+                raise ValueError(f"chapter {check.chapter_index} has more than one check block")
+            seen_chapters.add(check.chapter_index)
+        return self
+
+    @model_validator(mode="after")
+    def _question_ids_are_unique(self) -> InteractiveVideoSpec:
+        """No two questions in one video may share an id.
+
+        Questions are generated per chapter, so their ids are only unique within a
+        chapter until they are renumbered. An H5P subcontent id is derived from the
+        question id, and two interactions sharing one collide in the learner's
+        stored state — a silent failure that only shows up on a resumed attempt.
+        """
+        seen: set[str] = set()
+        for check in self.checks:
+            for question in check.questions:
+                if question.id in seen:
+                    raise ValueError(f"question id {question.id!r} appears more than once")
+                seen.add(question.id)
         return self

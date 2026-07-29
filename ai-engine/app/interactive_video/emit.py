@@ -11,27 +11,47 @@ bite hardest here:
   list is not an error the author sees — the interaction is *stripped* and the
   video imports and plays with the question quietly missing. ``H5P.Essay`` is not
   on Interactive Video's list, so short-answer questions cannot ride along.
-- **``l10n`` must be written out in full.** The player reads ``this.l10n.<key>``
-  with no fallback, so an absent block puts the string "undefined" on the
-  learner's controls. The defaults below are lifted from the library's own
-  semantics, which is where those defaults are declared.
+- **``video.textTracks`` must be emitted even when empty.** The constructor does
+  ``options = $.extend({video: {textTracks: {videoTrack: []}}, …}, interactiveVideo)``
+  — a **shallow** merge, with no leading ``true``. Our ``video`` object therefore
+  *replaces* that default wholesale, so the key only ever exists if we write it.
+  One read of it is guarded; the one at the end of ``getCopyrights`` is not, and
+  H5P core calls ``getCopyrights`` whenever the rights dialog is built, which is
+  the platform default. Omitting the key is a ``TypeError`` on the learner's page.
+- **``assets.endscreens`` is what turns the submit path on.**
+  ``hasStar = editor || undefined !== assets.endscreens && assets.endscreens.length && …``
+  — with no endscreen the star control, the end card and the submit button are all
+  dead code, so a learner answers every check and is never offered "Submit
+  Answers". H5P's own published content ships exactly one endscreen.
+- **The twelve end-card ``l10n`` strings are not defaulted.** The runtime does
+  default the other 38 (``l10n = $.extend({interaction: "Interaction", …}, l10n)``),
+  but the ``endcard*``/``endCard*`` keys are absent from that block — and those are
+  precisely the strings the submit path above puts on screen. The whole block is
+  emitted anyway, from the library's own semantics: being explicit costs a few
+  hundred bytes and removes a dependency on someone else's default.
 
 ``summary`` and ``goto`` are deliberately *not* emitted: the runtime guards both
 (``hasMainSummary`` returns false when the group is absent, and ``goto`` is only
 read behind ``&&``), and H5P's own published content omits them too.
+
+Everything the model wrote — chapter titles, question prompts — is escaped on the
+way in, for the reason ``app/assessment/emit/h5p.py`` records: H5P builds these
+labels by string concatenation into the DOM.
 """
 
 from __future__ import annotations
 
-from typing import NamedTuple
-
 from ..assessment.emit.h5p import UnrenderableQuestion, build_question_subcontent
-from ..packaging.h5p.manifest import build_manifest, sanitise_title
-from ..packaging.h5p.package import write_h5p
-from ..packaging.h5p.versions import (
+from ..packaging.h5p import (
     ALLOWED_INTERACTION_LIBRARIES,
     INTERACTIVE_VIDEO,
     INTERACTIVE_VIDEO_CLOSURE,
+    H5PPackage,
+    build_manifest,
+    escape_text,
+    sanitise_filename,
+    sanitise_title,
+    write_h5p,
 )
 from .schema import KNOWN_VIDEO_MIMES, InteractiveVideoSpec
 
@@ -41,9 +61,14 @@ _INTERACTION_WINDOW = 20.0
 #: Keep an interaction clear of the very end of the media: an interaction whose
 #: window starts at or after the final frame never becomes reachable.
 _END_MARGIN = 1.0
-#: Button positions are percentages of the frame. Several checks on one chapter
-#: are laid out along a row so their buttons cannot sit on top of each other.
-_FIRST_X, _X_STEP, _MAX_X, _BUTTON_Y = 20.0, 14.0, 80.0, 40.0
+#: Button positions are percentages of the frame. Several checks that appear at
+#: the same instant are laid out on a grid so their buttons cannot sit on top of
+#: each other — two buttons at identical coordinates means only the topmost is
+#: clickable, and the questions underneath are silently unanswerable.
+_FIRST_X, _X_STEP, _MAX_X = 20.0, 14.0, 80.0
+_FIRST_Y, _Y_STEP = 40.0, 12.0
+#: How many buttons fit on one row before wrapping to the next.
+_PER_ROW = int((_MAX_X - _FIRST_X) // _X_STEP) + 1
 #: What H5P calls each library in an interaction's ``libraryTitle``.
 _CONTENT_TYPE_TITLES = {
     "H5P.MultiChoice": "Multiple Choice",
@@ -63,7 +88,11 @@ _OVERRIDE: dict[str, object] = {
 }
 
 #: ``interactiveVideo.l10n`` — all 47 strings the player reads, verbatim from the
-#: same semantics file. Emitted in full because the runtime never defaults them.
+#: same semantics file. The runtime defaults 38 of them; the twelve ``endcard*`` /
+#: ``endCard*`` keys are **not** in that block, and those are exactly the strings
+#: the submit path puts on screen. The whole set is written out rather than only
+#: the twelve: it costs a few hundred bytes and it is one fewer thing that changes
+#: meaning when the library is upgraded.
 _L10N: dict[str, str] = {
     "interaction": "Interaction",
     "play": "Play",
@@ -127,36 +156,65 @@ _L10N: dict[str, str] = {
 }
 
 
-class H5PPackage(NamedTuple):
-    """A built ``.h5p`` and anything the caller should know about it."""
+def _timeline_end(spec: InteractiveVideoSpec) -> float:
+    """How long the media is, as far as this package can tell.
 
-    content: bytes
-    filename: str
-    warnings: list[str]
+    ``media_seconds`` is optional — an OpenAI-compatible STT gateway need not
+    report a duration, and a caller can POST a `ChapteredTranscript` without one.
+    The last chapter's end is then the best available answer, and using it matters:
+    that chapter's check is the one that would otherwise be pinned to the final
+    frame, where it never becomes reachable.
+    """
+    declared = spec.source.media_seconds
+    if declared is not None and declared > 0:
+        return declared
+    return max((chapter.end for chapter in spec.chapters), default=0.0)
 
 
-def _bookmarks(spec: InteractiveVideoSpec) -> list[dict[str, object]]:
+def _bookmarks(spec: InteractiveVideoSpec, limit: float) -> list[dict[str, object]]:
     """Chapter starts, as the marks in the player's navigation bar.
 
     H5P rounds a bookmark to the second when it seeks, so the times are emitted as
     the chapter's own start rather than nudged — a mark that sits a moment early is
-    better than one that lands after the first sentence of its chapter.
+    better than one that lands after the first sentence of its chapter. A mark past
+    the end of the media is unreachable, so it is clamped the same way a check is.
     """
     return [
-        {"time": round(chapter.start, 2), "label": chapter.title} for chapter in spec.chapters
+        {
+            "time": round(max(min(chapter.start, limit), 0.0), 2),
+            "label": escape_text(chapter.title),
+        }
+        for chapter in spec.chapters
     ]
 
 
+def _endscreens(limit: float) -> list[dict[str, object]]:
+    """The single end screen that turns the submit path on.
+
+    Without an entry here ``hasStar`` is false and the end card, the score bubble
+    and the "Submit Answers" button are never built — the learner answers every
+    check and is offered no way to hand them in. The runtime clamps a time past
+    the media length to the duration and rewrites the label, so a value at the
+    very end is safe on a recording of any length.
+    """
+    return [{"time": round(max(limit, 0.0), 2), "label": "Submit screen"}]
+
+
 def _placement(order: int) -> tuple[float, float]:
-    """Where the nth button on one chapter sits, as frame percentages."""
-    return min(_FIRST_X + order * _X_STEP, _MAX_X), _BUTTON_Y
+    """Where the nth simultaneous button sits, as frame percentages.
+
+    Wrapping onto a new row rather than clamping at ``_MAX_X``: clamping put every
+    button past the fifth on one spot, which hides all but the topmost.
+    """
+    return (
+        _FIRST_X + (order % _PER_ROW) * _X_STEP,
+        _FIRST_Y + (order // _PER_ROW) * _Y_STEP,
+    )
 
 
-def _appears_at(chapter_end: float, media_seconds: float | None) -> float:
+def _appears_at(chapter_end: float, limit: float) -> float:
     """When a check appears: the chapter's end, kept clear of the final frame."""
-    if media_seconds is None or media_seconds <= 0:
-        return round(max(chapter_end, 0.0), 2)
-    return round(max(min(chapter_end, media_seconds - _END_MARGIN), 0.0), 2)
+    return round(max(min(chapter_end, limit - _END_MARGIN), 0.0), 2)
 
 
 def _interaction(
@@ -181,15 +239,18 @@ def _interaction(
     }
 
 
-def _interactions(spec: InteractiveVideoSpec, warnings: list[str]) -> list[dict[str, object]]:
+def _interactions(
+    spec: InteractiveVideoSpec, limit: float, warnings: list[str]
+) -> list[dict[str, object]]:
     """Every question, placed at the end of the chapter it belongs to."""
     ends = {chapter.index: chapter.end for chapter in spec.chapters}
-    media = spec.source.media_seconds
     built: list[dict[str, object]] = []
+    # Buttons are laid out per *instant*, not per chapter: two chapters whose ends
+    # clamp to the same moment would otherwise stack their buttons on each other.
+    order_at: dict[float, int] = {}
 
     for check in spec.checks:
-        at = _appears_at(ends[check.chapter_index], media)
-        order = 0
+        at = _appears_at(ends[check.chapter_index], limit)
         for question in check.questions:
             try:
                 action = build_question_subcontent(
@@ -200,16 +261,25 @@ def _interactions(spec: InteractiveVideoSpec, warnings: list[str]) -> list[dict[
                     f"Left {question.id} out of the interactive video: {unrenderable.reason}."
                 )
                 continue
+            order = order_at.get(at, 0)
+            order_at[at] = order + 1
             built.append(
-                _interaction(
-                    action,
-                    at=at,
-                    order=order,
-                    label=(question.prompt or "")[:120] or f"Question {question.id}",
-                )
+                _interaction(action, at=at, order=order, label=_label(question))
             )
-            order += 1
     return built
+
+
+def _label(question: object) -> str:
+    """What the learner reads on the button, before they open the question.
+
+    ``prompt`` is optional on a fill-in-the-blanks question — the sentence itself
+    carries the instruction — so the text is the honest label there. The id is the
+    last resort: a button reading "Question q3" is poor, but a blank one is worse.
+    """
+    for candidate in (getattr(question, "prompt", None), getattr(question, "text", None)):
+        if candidate and candidate.strip():
+            return escape_text(candidate.strip())[:120]
+    return f"Question {getattr(question, 'id', '')}".strip()
 
 
 def emit_interactive_video(spec: InteractiveVideoSpec) -> H5PPackage:
@@ -222,7 +292,19 @@ def emit_interactive_video(spec: InteractiveVideoSpec) -> H5PPackage:
             f"({', '.join(sorted(KNOWN_VIDEO_MIMES))}); the learner may see an empty player."
         )
 
-    interactions = _interactions(spec, warnings)
+    limit = _timeline_end(spec)
+    declared = spec.source.media_seconds
+    overrun = max((chapter.end for chapter in spec.chapters), default=0.0)
+    if declared is not None and declared > 0 and overrun > declared:
+        # The transcribed upload and the streamed URL are two different files here,
+        # which the two-parameter endpoint openly invites. Say so rather than
+        # quietly collapsing every over-running chapter onto the same instant.
+        warnings.append(
+            f"The chapters run to {overrun:.1f}s but the media is {declared:.1f}s long; "
+            "marks and checks past the end have been pulled back to it."
+        )
+
+    interactions = _interactions(spec, limit, warnings)
     if not interactions:
         warnings.append("No knowledge checks were placed; the video has chapters only.")
 
@@ -233,6 +315,10 @@ def emit_interactive_video(spec: InteractiveVideoSpec) -> H5PPackage:
                     "title": sanitise_title(spec.title, fallback="Interactive video"),
                     "hideStartTitle": False,
                 },
+                # Emitted even though it is empty: the constructor's default for
+                # this key is applied by a *shallow* extend, so writing `video` at
+                # all removes it — and getCopyrights dereferences it unguarded.
+                "textTracks": {"videoTrack": []},
                 # Referenced, not bundled — the shape H5P's own published content
                 # uses. "U" is Undisclosed: the recording is the tenant's, so the
                 # engine is in no position to assert a licence on their behalf.
@@ -244,7 +330,11 @@ def emit_interactive_video(spec: InteractiveVideoSpec) -> H5PPackage:
                     }
                 ],
             },
-            "assets": {"interactions": interactions, "bookmarks": _bookmarks(spec)},
+            "assets": {
+                "interactions": interactions,
+                "bookmarks": _bookmarks(spec, limit),
+                "endscreens": _endscreens(limit),
+            },
         },
         "override": dict(_OVERRIDE),
         "l10n": dict(_L10N),
@@ -256,7 +346,9 @@ def emit_interactive_video(spec: InteractiveVideoSpec) -> H5PPackage:
         main_library=INTERACTIVE_VIDEO,
         dependencies=INTERACTIVE_VIDEO_CLOSURE,
     )
-    stem = spec.source.filename.rsplit(".", 1)[0] or "interactive-video"
+    stem = sanitise_filename(
+        spec.source.filename.rsplit(".", 1)[0], fallback="interactive-video"
+    )
     return H5PPackage(
         content=write_h5p(manifest=manifest, content=content),
         filename=f"{stem}-interactive-video.h5p",

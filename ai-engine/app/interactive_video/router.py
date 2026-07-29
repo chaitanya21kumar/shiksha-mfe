@@ -11,7 +11,9 @@ from. They are usually the same recording in two places, and the endpoint asks f
 both rather than guessing one from the other.
 
 Warnings ride in the ``X-Package-Warnings`` header, as they do for the other
-packaging endpoints, because the body is a file.
+packaging endpoints, because the body is a file — through the same shared helper,
+so the JSON-escaping that keeps a non-English warning from becoming a 500 cannot
+be forgotten in one router and remembered in another.
 """
 
 from __future__ import annotations
@@ -26,29 +28,35 @@ from ..assessment.pipeline import ALL_TYPES, QuestionType
 from ..chaptering.pipeline import generate_chapters
 from ..chaptering.schema import ChapteredTranscript
 from ..config import settings
+from ..packaging.response import ZIP_MEDIA_TYPE, package_response
 from ..summarization.pipeline import GenerationConfig
 from ..summarization.router import get_llm_client
 from ..transcription.pipeline import TranscriptionConfig
 from ..transcription.router import get_stt_client
 from ..transcription.service import transcribe_upload
 from .emit import emit_interactive_video
-from .pipeline import build_interactive_video
+from .pipeline import VideoBuildOptions, build_interactive_video
 from .schema import VideoSource
 
 router = APIRouter(tags=["interactive video"])
 
 #: Interactive Video's own whitelist has no room for H5P.Essay, so short answers
 #: are not offered here — asking for them would only produce warnings.
-_EMBEDDABLE_TYPES: tuple[QuestionType, ...] = tuple(
-    t for t in ALL_TYPES if t != "short_answer"
-)
+_EMBEDDABLE_TYPES: tuple[QuestionType, ...] = tuple(t for t in ALL_TYPES if t != "short_answer")
 
 _ERROR_RESPONSES = {
-    400: {"description": "The transcript has no speech to build a video from"},
+    400: {"description": "No speech to build a video from, or an unusable parameter"},
     413: {"description": "The media file is larger than the configured ceiling"},
     415: {"description": "Unsupported media type"},
     503: {"description": "A model gateway is unreachable, rejected the key, or is rate-limited"},
     504: {"description": "Generation timed out"},
+}
+_ZIP_RESPONSE = {
+    200: {
+        "content": {ZIP_MEDIA_TYPE: {"schema": {"type": "string", "format": "binary"}}},
+        "description": "The interactive video package",
+    },
+    **_ERROR_RESPONSES,
 }
 
 _VIDEO_URL_QUERY = Query(
@@ -57,8 +65,11 @@ _VIDEO_URL_QUERY = Query(
 )
 _TYPES_QUERY = Query(
     description="Question types for the knowledge checks (any of mcq, match, fill_blank). "
-    "short_answer is not offered: Interactive Video does not accept H5P.Essay."
+    "short_answer is not accepted: Interactive Video does not allow H5P.Essay."
 )
+_TITLE_QUERY = Query(description="Shown on the video's start screen.")
+_COUNT_QUERY = Query(ge=1, le=5, description="Questions per type, per chapter.")
+_LANGUAGE_QUERY = Query(description="BCP-47 tag for the package.")
 
 
 def _generation_config() -> GenerationConfig:
@@ -83,8 +94,23 @@ def _transcription_config() -> TranscriptionConfig:
 
 
 def _resolve_types(requested: list[QuestionType] | None) -> list[QuestionType]:
-    chosen = list(dict.fromkeys(requested or _EMBEDDABLE_TYPES))
-    return [t for t in chosen if t in _EMBEDDABLE_TYPES] or list(_EMBEDDABLE_TYPES)
+    """Pick the types to generate, refusing a request this format cannot honour.
+
+    A caller who asks only for ``short_answer`` used to be handed the three other
+    types instead. Silently generating something nobody asked for is worse than
+    saying no, so an unhonourable request is a 400 that names the reason.
+    """
+    if requested is None:
+        return list(_EMBEDDABLE_TYPES)
+    chosen = [t for t in dict.fromkeys(requested) if t in _EMBEDDABLE_TYPES]
+    if not chosen:
+        raise HTTPException(
+            status_code=400,
+            detail="short_answer cannot be embedded in an interactive video: H5P.Essay is "
+            "not on H5P.InteractiveVideo's interaction whitelist and would be stripped "
+            "at import. Ask for any of mcq, match, fill_blank.",
+        )
+    return chosen
 
 
 def _video_source(url: str) -> VideoSource:
@@ -100,27 +126,31 @@ def _video_source(url: str) -> VideoSource:
         raise HTTPException(status_code=400, detail=str(invalid.errors()[0]["msg"])) from invalid
 
 
-def _as_response(package) -> Response:
-    return Response(
-        content=package.content,
-        media_type="application/zip",
-        headers={
-            "content-disposition": f'attachment; filename="{package.filename}"',
-            "x-package-warning-count": str(len(package.warnings)),
-            **({"x-package-warnings": " | ".join(package.warnings)[:900]} if package.warnings else {}),
-        },
+def _options(
+    content_id: str,
+    title: str,
+    question_types: list[QuestionType] | None,
+    count: int,
+    language: str,
+) -> VideoBuildOptions:
+    return VideoBuildOptions(
+        content_id=content_id,
+        title=title,
+        question_types=_resolve_types(question_types),
+        count=count,
+        language=language,
     )
 
 
-@router.post("/interactive-video", responses=_ERROR_RESPONSES)
+@router.post("/interactive-video", response_class=Response, responses=_ZIP_RESPONSE)
 async def interactive_video(
     client: Annotated[httpx.AsyncClient, Depends(get_llm_client)],
     chaptered: Annotated[ChapteredTranscript, Body()],
     video_url: Annotated[str, _VIDEO_URL_QUERY],
-    title: Annotated[str, Query(description="Shown on the video's start screen.")] = "Interactive video",
+    title: Annotated[str, _TITLE_QUERY] = "Interactive video",
     question_types: Annotated[list[QuestionType] | None, _TYPES_QUERY] = None,
-    count: Annotated[int, Query(ge=1, le=5, description="Questions per type, per chapter.")] = 1,
-    language: Annotated[str, Query(description="BCP-47 tag for the package.")] = "en",
+    count: Annotated[int, _COUNT_QUERY] = 1,
+    language: Annotated[str, _LANGUAGE_QUERY] = "en",
 ) -> Response:
     """Build an interactive video from an already-chaptered transcript."""
     spec = await build_interactive_video(
@@ -128,38 +158,28 @@ async def interactive_video(
         chaptered,
         _video_source(video_url),
         _generation_config(),
-        content_id=chaptered.source.filename,
-        title=title,
-        question_types=_resolve_types(question_types),
-        count=count,
-        language=language,
+        _options(chaptered.source.filename, title, question_types, count, language),
     )
-    return _as_response(emit_interactive_video(spec))
+    return package_response(emit_interactive_video(spec))
 
 
-@router.post("/interactive-video/file", responses=_ERROR_RESPONSES)
+@router.post("/interactive-video/file", response_class=Response, responses=_ZIP_RESPONSE)
 async def interactive_video_file(
     file: Annotated[UploadFile, File()],
     stt_client: Annotated[httpx.AsyncClient, Depends(get_stt_client)],
     llm_client: Annotated[httpx.AsyncClient, Depends(get_llm_client)],
     video_url: Annotated[str, _VIDEO_URL_QUERY],
-    title: Annotated[str, Query(description="Shown on the video's start screen.")] = "Interactive video",
+    title: Annotated[str, _TITLE_QUERY] = "Interactive video",
     question_types: Annotated[list[QuestionType] | None, _TYPES_QUERY] = None,
-    count: Annotated[int, Query(ge=1, le=5, description="Questions per type, per chapter.")] = 1,
-    language: Annotated[str, Query(description="BCP-47 tag for the package.")] = "en",
+    count: Annotated[int, _COUNT_QUERY] = 1,
+    language: Annotated[str, _LANGUAGE_QUERY] = "en",
 ) -> Response:
     """Transcribe, chapter, question and package a recording in one call."""
+    options = _options(file.filename or "interactive-video", title, question_types, count, language)
+    source = _video_source(video_url)
     transcript = await transcribe_upload(file, _transcription_config(), stt_client)
     chaptered = await generate_chapters(llm_client, transcript, _generation_config())
     spec = await build_interactive_video(
-        llm_client,
-        chaptered,
-        _video_source(video_url),
-        _generation_config(),
-        content_id=file.filename or "interactive-video",
-        title=title,
-        question_types=_resolve_types(question_types),
-        count=count,
-        language=language,
+        llm_client, chaptered, source, _generation_config(), options
     )
-    return _as_response(emit_interactive_video(spec))
+    return package_response(emit_interactive_video(spec))
