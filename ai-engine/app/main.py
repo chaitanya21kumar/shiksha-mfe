@@ -23,6 +23,8 @@ from .narration.router import router as narration_router
 from .summarization.llm_client import LLMTimeout, LLMUnavailable
 from .summarization.pipeline import EmptyDocumentError
 from .summarization.router import router as summarization_router
+from .transcription.router import router as transcription_router
+from .transcription.stt_client import STTTimeout, STTUnavailable
 
 logger = logging.getLogger("ai_engine")
 
@@ -35,11 +37,15 @@ async def lifespan(app: FastAPI):
     # has a long one because generating on a model takes many seconds.
     app.state.http_client = httpx.AsyncClient(timeout=2.0)
     app.state.llm_client = httpx.AsyncClient(timeout=settings.llm_request_timeout)
+    # Transcribing long media is far slower than a chat completion, so its client
+    # gets its own, much larger timeout.
+    app.state.stt_client = httpx.AsyncClient(timeout=settings.stt_request_timeout)
     try:
         yield
     finally:
         await app.state.http_client.aclose()
         await app.state.llm_client.aclose()
+        await app.state.stt_client.aclose()
         logger.info("Stopping %s", settings.app_name)
 
 
@@ -53,6 +59,7 @@ def create_app() -> FastAPI:
     # Populated on startup; these guards keep calls before lifespan runs from crashing.
     app.state.http_client = None
     app.state.llm_client = None
+    app.state.stt_client = None
 
     @app.get("/", tags=["system"])
     async def root() -> dict:
@@ -115,10 +122,20 @@ def create_app() -> FastAPI:
     async def _on_llm_timeout(request: Request, exc: LLMTimeout) -> JSONResponse:
         return JSONResponse(status_code=504, content={"detail": str(exc)})
 
+    # The STT gateway fails the same way the model gateway does, mapped the same way.
+    @app.exception_handler(STTUnavailable)
+    async def _on_stt_unavailable(request: Request, exc: STTUnavailable) -> JSONResponse:
+        return JSONResponse(status_code=503, content={"detail": str(exc)})
+
+    @app.exception_handler(STTTimeout)
+    async def _on_stt_timeout(request: Request, exc: STTTimeout) -> JSONResponse:
+        return JSONResponse(status_code=504, content={"detail": str(exc)})
+
     app.include_router(ingestion_router)
     app.include_router(summarization_router)
     app.include_router(narration_router)
     app.include_router(assessment_router)
+    app.include_router(transcription_router)
     return app
 
 
