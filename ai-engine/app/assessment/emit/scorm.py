@@ -29,10 +29,10 @@ from __future__ import annotations
 
 import html
 import json
-import re
 from importlib import resources
 from typing import NamedTuple
 
+from ...packaging.naming import sanitise_filename
 from ...packaging.scorm import (
     LAUNCH_NAME,
     RESPONSE_MAX_CHARS,
@@ -350,9 +350,8 @@ def _question_payload(question: Question, warnings: list[str]) -> dict[str, obje
 
 
 def _filename(assessment: AssessmentSet) -> str:
-    stem = assessment.source.filename.rsplit(".", 1)[0] or "assessment"
-    safe = re.sub(r"[^A-Za-z0-9._-]+", "-", stem).strip("-") or "assessment"
-    return f"{safe}-scorm.zip"
+    stem = assessment.source.filename.rsplit(".", 1)[0]
+    return f"{sanitise_filename(stem, fallback='assessment')}-scorm.zip"
 
 
 def emit_scorm(assessment: AssessmentSet) -> ScormPackage:
