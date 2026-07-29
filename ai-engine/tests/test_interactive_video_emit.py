@@ -498,3 +498,39 @@ def test_a_filename_longer_than_a_header_line_is_trimmed():
     filename = emit_interactive_video(spec).filename
     assert len(filename) < 200
     filename.encode("latin-1")
+
+
+def test_every_button_stays_inside_the_video_frame():
+    # The earlier grid test asserted only that coordinates differ, which an
+    # unbounded y satisfies trivially by walking off the bottom of the screen —
+    # distinct and unclickable is not better than stacked and unclickable.
+    # Enough to exhaust the grid: three chapters that all clamp to the same instant
+    # because the declared media is far shorter than they are, twelve checks each.
+    spec = _spec(
+        source=TranscriptSource(filename="lecture.mp4", media_seconds=60.0),
+        chapters=[Chapter(index=i, start=(i - 1) * 100.0, end=i * 100.0, title=f"C{i}") for i in (1, 2, 3)],
+        checks=[
+            ChapterCheck(
+                chapter_index=i,
+                questions=[_mcq(f"q{i}-{j}") for j in range(12)],
+            )
+            for i in (1, 2, 3)
+        ],
+    )
+    package = emit_interactive_video(spec)
+    interactions = _content(package)["interactiveVideo"]["assets"]["interactions"]
+    assert interactions
+    for one in interactions:
+        assert one["x"] + one["width"] <= 100, "button runs off the right of the frame"
+        assert one["y"] + one["height"] <= 100, "button runs off the bottom of the frame"
+
+
+def test_the_caller_is_told_when_too_many_checks_share_the_screen():
+    # Reusing a position is a real loss of function, so it is reported rather than
+    # left for someone to discover in the player.
+    questions = [_mcq(f"q{i}") for i in range(1, 26)]
+    spec = _spec(
+        chapters=[Chapter(index=1, start=0.0, end=90.0, title="One")],
+        checks=[ChapterCheck(chapter_index=1, questions=questions)],
+    )
+    assert any("share the screen at once" in w for w in emit_interactive_video(spec).warnings)
