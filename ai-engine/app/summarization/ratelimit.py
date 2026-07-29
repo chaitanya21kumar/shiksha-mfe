@@ -113,6 +113,20 @@ class RateLimitGovernor:
         window = parse_duration(reset or "")
         budget.reset_at = budget.seen_at + window if window is not None else None
 
+    def has_room(self, gateway: str) -> bool:
+        """Could the next call go out now, without waiting?
+
+        The non-blocking half of `wait_for_room`, for a caller that has somewhere
+        else to send the request. Waiting out a window is the right answer only
+        when the alternative is not sending it at all.
+        """
+        budget = self._budgets.get(gateway)
+        if budget is None or budget.remaining_tokens is None:
+            return True
+        if time.monotonic() - budget.seen_at > _STALE_AFTER:
+            return True
+        return budget.remaining_tokens >= _LOW_TOKENS
+
     async def wait_for_room(self, gateway: str) -> float:
         """Sleep, if the last reply said there is not enough budget for another call.
 

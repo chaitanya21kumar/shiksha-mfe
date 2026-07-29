@@ -251,6 +251,21 @@ async def chat_json_for(
     fallback_url = getattr(config, "fallback_base_url", "")
     fallback_key = getattr(config, "fallback_api_key", "")
     has_fallback = bool(fallback_url and fallback_key)
+
+    # If the primary has no room and there is somewhere else to go, go there rather
+    # than sleeping out the window. Pacing exists to avoid being refused; it is not
+    # worth a minute of waiting when a second gateway can answer in three seconds.
+    if has_fallback and not governor.has_room(config.base_url):
+        logger.info("Primary is out of budget for now; using %s", fallback_url)
+        return await chat_json(
+            client,
+            base_url=fallback_url,
+            api_key=fallback_key,
+            model=getattr(config, "fallback_model", "") or config.model,
+            system=system,
+            user=user,
+            temperature=config.temperature,
+        )
     try:
         return await chat_json(
             client,

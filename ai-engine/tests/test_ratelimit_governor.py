@@ -332,3 +332,37 @@ def test_a_plain_rate_limit_is_still_a_rate_limit():
         response=httpx.Response(429, json={"error": {"message": "Rate limit reached"}}),
     )
     assert isinstance(_status_error(exc), LLMUnavailable)
+
+
+def test_a_low_primary_budget_routes_to_the_fallback_rather_than_sleeping():
+    # Measured: three assessment calls consume almost the whole per-minute window,
+    # so the third made the governor sleep and the endpoint took 53 seconds. The
+    # pacing exists to avoid being refused — it is not worth a minute of waiting
+    # when a second gateway answers in three seconds.
+    from app.summarization.llm_client import governor
+
+    governor._budgets.clear()
+    governor.observe("https://primary.test/v1", _headers(remaining=20, reset="60s"))
+    seen = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(str(request.url))
+        return httpx.Response(200, json={"choices": [{"message": {"content": '{"via": "second"}'}}]})
+
+    config = _Cfg(fallback_base_url="https://second.test/v1", fallback_api_key="k2")
+    import time as _t
+    started = _t.monotonic()
+    assert _run(config, handler) == {"via": "second"}
+    assert _t.monotonic() - started < 5.0, "it slept instead of routing around"
+    assert all("second.test" in u for u in seen), "the primary was called despite having no room"
+    governor._budgets.clear()
+
+
+def test_with_no_fallback_a_low_budget_still_waits():
+    # The pause is what keeps a single-gateway deployment from being refused.
+    from app.summarization.ratelimit import RateLimitGovernor
+
+    g = RateLimitGovernor()
+    g.observe("https://only.test/v1", _headers(remaining=20, reset="0.3s"))
+    assert g.has_room("https://only.test/v1") is False
+    assert asyncio.run(g.wait_for_room("https://only.test/v1")) > 0
