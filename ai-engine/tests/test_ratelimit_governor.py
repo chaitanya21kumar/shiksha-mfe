@@ -288,3 +288,47 @@ def test_without_a_fallback_the_primary_is_still_retried():
 
     assert _run(_Cfg(), handler) == {}
     assert len(attempts) == 3
+
+
+def test_a_prompt_too_large_for_one_gateway_is_sent_to_the_other():
+    # This is the one refusal a retry can never fix: the request exceeds the
+    # ceiling, not the current allowance. It is also exactly what a second gateway
+    # with a bigger budget is for. Left as a generic bad response it surfaced as
+    # "could not ground any question — try a richer document", which is backwards:
+    # the document was too rich.
+    seen = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(str(request.url))
+        if "primary" in str(request.url):
+            return httpx.Response(413, json={"error": {
+                "message": "Request too large for model `x` on tokens per minute (TPM): "
+                           "Limit 6000, Requested 6605", "code": "rate_limit_exceeded"}})
+        return httpx.Response(200, json={"choices": [{"message": {"content": '{"ok": 1}'}}]})
+
+    config = _Cfg(fallback_base_url="https://second.test/v1", fallback_api_key="k2")
+    assert _run(config, handler) == {"ok": 1}
+    assert any("second.test" in u for u in seen)
+
+
+def test_groqs_429_that_actually_means_too_large_is_treated_as_too_large():
+    # Groq sometimes reports an over-large prompt as a 429 whose body says
+    # "Request too large". Waiting for that one never helps.
+    from app.summarization.llm_client import LLMRequestTooLarge, _status_error
+
+    exc = httpx.HTTPStatusError(
+        "429", request=httpx.Request("POST", "https://x/v1"),
+        response=httpx.Response(429, json={"error": {
+            "message": "Request too large for model `x` on tokens per minute (TPM): Limit 6000"}}),
+    )
+    assert isinstance(_status_error(exc), LLMRequestTooLarge)
+
+
+def test_a_plain_rate_limit_is_still_a_rate_limit():
+    from app.summarization.llm_client import LLMUnavailable, _status_error
+
+    exc = httpx.HTTPStatusError(
+        "429", request=httpx.Request("POST", "https://x/v1"),
+        response=httpx.Response(429, json={"error": {"message": "Rate limit reached"}}),
+    )
+    assert isinstance(_status_error(exc), LLMUnavailable)

@@ -51,6 +51,16 @@ class LLMBadResponse(LLMError):
     """The gateway replied, but with something we could not use."""
 
 
+class LLMRequestTooLarge(LLMError):
+    """The prompt is bigger than this gateway will accept, at any speed.
+
+    Distinct from a rate limit, because waiting cannot help: the request exceeds
+    the ceiling rather than the current allowance. It is worth its own type
+    because it is precisely the case a second gateway with a larger budget can
+    serve — where a retry is useless, a failover is not.
+    """
+
+
 async def chat_json(
     client: httpx.AsyncClient,
     *,
@@ -178,9 +188,18 @@ def _status_error(exc: httpx.HTTPStatusError) -> LLMError:
     code = exc.response.status_code
     if code in (401, 403):
         return LLMUnavailable(f"The model gateway rejected the API key (HTTP {code}).")
+    body = exc.response.text[:300]
+    # Groq reports an over-large prompt as 413, and sometimes as a 429 whose body
+    # says "Request too large" — the distinction matters because one is a wait and
+    # the other never can be.
+    too_large = code == 413 or (code == 429 and "request too large" in body.lower())
+    if too_large:
+        return LLMRequestTooLarge(
+            f"The prompt is larger than this gateway accepts (HTTP {code}): {body[:200]}"
+        )
     if code == 429:
         return LLMUnavailable("The model gateway is rate-limited (HTTP 429).")
-    return LLMBadResponse(f"The model gateway returned HTTP {code}: {exc.response.text[:200]}")
+    return LLMBadResponse(f"The model gateway returned HTTP {code}: {body[:200]}")
 
 
 def _extract_content(response: httpx.Response) -> dict[str, Any]:
@@ -243,7 +262,7 @@ async def chat_json_for(
             temperature=config.temperature,
             max_retries=0 if has_fallback else _MAX_RETRIES,
         )
-    except LLMUnavailable:
+    except (LLMUnavailable, LLMRequestTooLarge):
         if not has_fallback:
             raise
         logger.warning(
