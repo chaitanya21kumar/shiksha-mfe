@@ -16,11 +16,12 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
 from .assessment.emit import EmptyAssessmentError
+from .assessment.router import router as assessment_router
 from .chaptering.pipeline import EmptyTranscriptError
 from .chaptering.router import router as chaptering_router
-from .assessment.router import router as assessment_router
 from .config import settings
 from .ingestion.router import router as ingestion_router
+from .interactive_video.router import router as interactive_video_router
 from .narration.router import router as narration_router
 from .summarization.llm_client import LLMTimeout, LLMUnavailable
 from .summarization.pipeline import EmptyDocumentError
@@ -143,6 +144,7 @@ def create_app() -> FastAPI:
     app.include_router(assessment_router)
     app.include_router(transcription_router)
     app.include_router(chaptering_router)
+    app.include_router(interactive_video_router)
     return app
 
 
