@@ -596,6 +596,36 @@ def _build(question: Question, assessment_id: str) -> dict[str, object] | None:
     raise _Unrenderable(f"{question.type} is not a type the H5P emitter can package")
 
 
+#: Public name for the "cannot be expressed" signal, so other H5P emitters can
+#: catch it without reaching for a private symbol.
+UnrenderableQuestion = _Unrenderable
+
+
+def build_question_subcontent(
+    question: Question,
+    assessment_id: str,
+    *,
+    allowed: frozenset[str] | None = None,
+) -> dict[str, object]:
+    """Map one question onto an H5P subcontent entry, or say why it cannot be.
+
+    This is the seam Module C's interactive video builds on: an interaction's
+    ``action`` is the same ``{library, params, subContentId, metadata}`` shape a
+    Question Set child uses, so the mapping is shared rather than written twice.
+
+    ``allowed`` is the host content type's own library whitelist. Passing it
+    matters because **the whitelists genuinely differ** — Interactive Video
+    permits eighteen libraries and ``H5P.Essay`` is not among them, so a
+    short-answer question that packages fine into a Question Set cannot go into a
+    video. Checking here keeps that rule in one place for every caller.
+    """
+    built = _build(question, assessment_id)
+    library = str(built["library"])
+    if allowed is not None and library not in allowed:
+        raise _Unrenderable(f"{library} is not a library this content type accepts")
+    return built
+
+
 def _question_set(assessment: AssessmentSet, questions: list[dict[str, object]]) -> dict[str, object]:
     bands = assessment.score_bands or default_score_bands(assessment.pass_percentage)
     title = assessment.source.title or assessment.source.filename
