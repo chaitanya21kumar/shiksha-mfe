@@ -23,6 +23,11 @@ import re
 #: only form that stays correct as new scripts and new punctuation turn up.
 _UNSAFE_IN_FILENAME = re.compile(r"[^A-Za-z0-9._-]+")
 
+#: A filename is a *header value*, not just a name. Most servers and proxies cap a
+#: single header line at 4-8 KB, and every common filesystem stops at 255 bytes, so
+#: a stem long enough to matter is trimmed rather than passed along to break later.
+MAX_FILENAME_STEM = 120
+
 
 def escape_text(text: str) -> str:
     """Escape model text for an H5P field.
@@ -34,6 +39,11 @@ def escape_text(text: str) -> str:
 
 
 def sanitise_filename(stem: str, *, fallback: str) -> str:
-    """Reduce a filename stem to what a ``Content-Disposition`` header can carry."""
-    safe = _UNSAFE_IN_FILENAME.sub("-", stem or "").strip("-")
-    return safe or fallback
+    """Reduce a filename stem to what a ``Content-Disposition`` header can carry.
+
+    Both halves matter: the character set, so the value is latin-1 encodable and
+    carries no quote or CRLF, and the length, because a header line has a ceiling
+    and so does every filesystem the download lands on.
+    """
+    safe = _UNSAFE_IN_FILENAME.sub("-", stem or "").strip("-")[:MAX_FILENAME_STEM]
+    return safe.rstrip("-") or fallback

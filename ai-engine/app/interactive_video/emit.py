@@ -7,9 +7,10 @@ for the reason ADR-0004 records: this format fails silently. The two rules that
 bite hardest here:
 
 - **The interaction whitelist is exact-string.** H5P's ``H5PContentValidator``
-  checks ``in_array($value->library, $libraryNames)``, so a library outside the
-  list is not an error the author sees — the interaction is *stripped* and the
-  video imports and plays with the question quietly missing. ``H5P.Essay`` is not
+  checks ``in_array($value->library, $libraryNames)`` and sets ``$value = NULL``.
+  The import still *succeeds*: the video plays with the question simply gone. Core
+  does record an error message, but only on the ``filterParameters`` path, which
+  ``savePackage`` never takes — so an upload reports nothing. ``H5P.Essay`` is not
   on Interactive Video's list, so short-answer questions cannot ride along.
 - **``video.textTracks`` must be emitted even when empty.** The constructor does
   ``options = $.extend({video: {textTracks: {videoTrack: []}}, …}, interactiveVideo)``
@@ -24,19 +25,22 @@ bite hardest here:
   dead code, so a learner answers every check and is never offered "Submit
   Answers". H5P's own published content ships exactly one endscreen.
 - **The twelve end-card ``l10n`` strings are not defaulted.** The runtime does
-  default the other 38 (``l10n = $.extend({interaction: "Interaction", …}, l10n)``),
-  but the ``endcard*``/``endCard*`` keys are absent from that block — and those are
-  precisely the strings the submit path above puts on screen. The whole block is
-  emitted anyway, from the library's own semantics: being explicit costs a few
-  hundred bytes and removes a dependency on someone else's default.
+  default the other 35 (``l10n = $.extend({interaction: "Interaction", …}, l10n)`` —
+  36 keys, of which 35 are ``l10n`` fields), but every ``endcard*``/``endCard*`` key
+  is absent from that block, and those are precisely the strings the submit path
+  above puts on screen. The whole block is emitted anyway, from the library's own
+  semantics: being explicit costs a few hundred bytes and removes a dependency on
+  someone else's default.
 
-``summary`` and ``goto`` are deliberately *not* emitted: the runtime guards both
-(``hasMainSummary`` returns false when the group is absent, and ``goto`` is only
-read behind ``&&``), and H5P's own published content omits them too.
+``summary`` and ``goto`` are deliberately *not* emitted, and the runtime guards
+both — ``hasMainSummary`` returns false when the group is absent, and ``goto`` is
+only read behind ``&&``. (The Hub's own sample content *does* carry both; it was
+authored in the editor, and nothing here generates a summary task or branching.)
 
-Everything the model wrote — chapter titles, question prompts — is escaped on the
-way in, for the reason ``app/assessment/emit/h5p.py`` records: H5P builds these
-labels by string concatenation into the DOM.
+Every string that did not originate here — chapter titles and question prompts from
+the model, the start-screen title from the caller — is escaped on the way in, for
+the reason ``app/assessment/emit/h5p.py`` records: H5P builds these labels by string
+concatenation into the DOM.
 """
 
 from __future__ import annotations
@@ -63,14 +67,24 @@ _INTERACTION_WINDOW = 20.0
 #: Keep an interaction clear of the very end of the media: an interaction whose
 #: window starts at or after the final frame never becomes reachable.
 _END_MARGIN = 1.0
-#: Button positions are percentages of the frame. Several checks that appear at
-#: the same instant are laid out on a grid so their buttons cannot sit on top of
-#: each other — two buttons at identical coordinates means only the topmost is
-#: clickable, and the questions underneath are silently unanswerable.
+#: Button positions are percentages of the frame. Checks whose *windows overlap* are
+#: on screen together, so they are laid out on a grid — two buttons at identical
+#: coordinates means only the topmost is clickable and the ones underneath are
+#: silently unanswerable. Overlap, not equality: two checks ten seconds apart share
+#: the screen for the rest of their twenty-second windows.
 _FIRST_X, _X_STEP, _MAX_X = 20.0, 14.0, 80.0
 _FIRST_Y, _Y_STEP = 40.0, 12.0
 #: How many buttons fit on one row before wrapping to the next.
 _PER_ROW = int((_MAX_X - _FIRST_X) // _X_STEP) + 1
+#: Rows before the grid would run off the bottom of the frame. Past this many
+#: simultaneous checks the video is unusable anyway, so it is reported, not hidden.
+_MAX_ROWS = 4
+_MAX_SLOTS = _PER_ROW * _MAX_ROWS
+#: A media length past this is not a recording, it is a bad number. Flooring it
+#: would raise OverflowError and turn a caller's typo into a 500.
+_MAX_MEDIA_SECONDS = 30 * 24 * 3600.0
+#: How much of a prompt fits on a button before it stops being readable.
+_MAX_LABEL_CHARS = 120
 #: What H5P calls each library in an interaction's ``libraryTitle``.
 _CONTENT_TYPE_TITLES = {
     "H5P.MultiChoice": "Multiple Choice",
@@ -90,7 +104,7 @@ _OVERRIDE: dict[str, object] = {
 }
 
 #: ``interactiveVideo.l10n`` — all 47 strings the player reads, verbatim from the
-#: same semantics file. The runtime defaults 38 of them; the twelve ``endcard*`` /
+#: same semantics file. The runtime defaults 35 of them; the twelve ``endcard*`` /
 #: ``endCard*`` keys are **not** in that block, and those are exactly the strings
 #: the submit path puts on screen. The whole set is written out rather than only
 #: the twelve: it costs a few hundred bytes and it is one fewer thing that changes
@@ -164,9 +178,13 @@ def _floor2(seconds: float) -> float:
     Ordinary rounding is not safe for a time that must not exceed the media: a
     185.857-second recording rounds to 185.86, which is 3 ms *past* the end — and
     the runtime's ``duration.to > t`` test fires on exactly that. Times are only
-    ever shortened here, never lengthened.
+    ever shortened here, never lengthened, and the final ``min`` makes that true
+    of the binary result and not merely of the arithmetic.
     """
-    return math.floor(seconds * 100) / 100
+    if not math.isfinite(seconds) or seconds <= 0:
+        return 0.0
+    bounded = min(seconds, _MAX_MEDIA_SECONDS)
+    return min(math.floor(bounded * 100) / 100, bounded)
 
 
 def _timeline_end(spec: InteractiveVideoSpec) -> float:
@@ -213,16 +231,45 @@ def _endscreens(limit: float) -> list[dict[str, object]]:
     return [{"time": _floor2(max(limit, 0.0)), "label": "Submit screen"}]
 
 
-def _placement(order: int) -> tuple[float, float]:
-    """Where the nth simultaneous button sits, as frame percentages.
+def _placement(slot: int) -> tuple[float, float]:
+    """Where the button in this grid slot sits, as frame percentages.
 
     Wrapping onto a new row rather than clamping at ``_MAX_X``: clamping put every
     button past the fifth on one spot, which hides all but the topmost.
     """
+    bounded = slot % _MAX_SLOTS
     return (
-        _FIRST_X + (order % _PER_ROW) * _X_STEP,
-        _FIRST_Y + (order // _PER_ROW) * _Y_STEP,
+        _FIRST_X + (bounded % _PER_ROW) * _X_STEP,
+        _FIRST_Y + (bounded // _PER_ROW) * _Y_STEP,
     )
+
+
+class _Grid:
+    """Hands out a free position to each check that is on screen right now.
+
+    Interval colouring, greedily: a slot is reusable the moment its last occupant's
+    window has closed. Keying on the *instant* instead was not enough — two checks
+    ten seconds apart still share the screen for the rest of their windows, and both
+    landed on the first slot with one of them permanently unclickable.
+
+    ``at`` arrives non-decreasing (chapters are ordered by contract and the clamp to
+    the media length preserves that), which is what makes the greedy pass optimal.
+    """
+
+    def __init__(self) -> None:
+        self._free_at: list[float] = []
+        self.overflowed = False
+
+    def take(self, at: float, until: float) -> int:
+        for slot, free in enumerate(self._free_at):
+            if free <= at:
+                self._free_at[slot] = until
+                return slot
+        self._free_at.append(until)
+        slot = len(self._free_at) - 1
+        if slot >= _MAX_SLOTS:
+            self.overflowed = True
+        return slot
 
 
 def _appears_at(chapter_end: float, limit: float) -> float:
@@ -248,17 +295,17 @@ def _window_end(at: float, limit: float) -> float:
 
 
 def _interaction(
-    action: dict[str, object], *, at: float, limit: float, order: int, label: str
+    action: dict[str, object], *, at: float, until: float, slot: int, label: str
 ) -> dict[str, object]:
     """One knowledge check on the timeline, in the shape H5P's own content uses."""
-    x, y = _placement(order)
+    x, y = _placement(slot)
     library = str(action["library"]).split(" ")[0]
     return {
         "x": x,
         "y": y,
         "width": 10,
         "height": 10,
-        "duration": {"from": at, "to": _window_end(at, limit)},
+        "duration": {"from": at, "to": until},
         # Pause so the learner answers rather than the question sliding past.
         "pause": True,
         "displayType": "button",
@@ -275,12 +322,11 @@ def _interactions(
     """Every question, placed at the end of the chapter it belongs to."""
     ends = {chapter.index: chapter.end for chapter in spec.chapters}
     built: list[dict[str, object]] = []
-    # Buttons are laid out per *instant*, not per chapter: two chapters whose ends
-    # clamp to the same moment would otherwise stack their buttons on each other.
-    order_at: dict[float, int] = {}
+    grid = _Grid()
 
     for check in spec.checks:
         at = _appears_at(ends[check.chapter_index], limit)
+        until = _window_end(at, limit)
         for question in check.questions:
             try:
                 action = build_question_subcontent(
@@ -291,11 +337,21 @@ def _interactions(
                     f"Left {question.id} out of the interactive video: {unrenderable.reason}."
                 )
                 continue
-            order = order_at.get(at, 0)
-            order_at[at] = order + 1
             built.append(
-                _interaction(action, at=at, limit=limit, order=order, label=_label(question))
+                _interaction(
+                    action,
+                    at=at,
+                    until=until,
+                    slot=grid.take(at, until),
+                    label=_label(question),
+                )
             )
+
+    if grid.overflowed:
+        warnings.append(
+            f"More than {_MAX_SLOTS} knowledge checks share the screen at once; some "
+            "buttons had to reuse a position. Lower `count` or use longer chapters."
+        )
     return built
 
 
@@ -305,10 +361,13 @@ def _label(question: object) -> str:
     ``prompt`` is optional on a fill-in-the-blanks question — the sentence itself
     carries the instruction — so the text is the honest label there. The id is the
     last resort: a button reading "Question q3" is poor, but a blank one is worse.
+
+    Truncate first, escape second. The other order cuts inside an escape sequence
+    and puts a dangling ``&lt`` on the button.
     """
     for candidate in (getattr(question, "prompt", None), getattr(question, "text", None)):
         if candidate and candidate.strip():
-            return escape_text(candidate.strip())[:120]
+            return escape_text(candidate.strip()[:_MAX_LABEL_CHARS])
     return f"Question {getattr(question, 'id', '')}".strip()
 
 
@@ -342,7 +401,9 @@ def emit_interactive_video(spec: InteractiveVideoSpec) -> H5PPackage:
         "interactiveVideo": {
             "video": {
                 "startScreenOptions": {
-                    "title": sanitise_title(spec.title, fallback="Interactive video"),
+                    "title": escape_text(
+                        sanitise_title(spec.title, fallback="Interactive video")
+                    ),
                     "hideStartTitle": False,
                 },
                 # Emitted even though it is empty: the constructor's default for

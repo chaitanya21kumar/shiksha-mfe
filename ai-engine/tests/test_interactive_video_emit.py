@@ -420,3 +420,81 @@ def test_times_are_floored_so_rounding_cannot_push_them_past_the_media():
     assert content["interactions"][0]["duration"]["to"] <= media
     assert content["endscreens"][0]["time"] <= media
     assert all(b["time"] <= media for b in content["bookmarks"])
+
+
+# --- the second audit: edges of the fixes above -------------------------------
+
+
+def test_checks_whose_windows_overlap_do_not_share_a_button_position():
+    # The first fix keyed the anti-stacking counter on the exact instant, which is
+    # not the same question: two checks ten seconds apart share the screen for the
+    # rest of their twenty-second windows, and both landed on the first slot.
+    spec = _spec(
+        source=TranscriptSource(filename="lecture.mp4", media_seconds=40.0),
+        chapters=[
+            Chapter(index=1, start=0.0, end=10.0, title="A"),
+            Chapter(index=2, start=10.0, end=20.0, title="B"),
+            Chapter(index=3, start=20.0, end=30.0, title="C"),
+        ],
+        checks=[ChapterCheck(chapter_index=i, questions=[_mcq(f"q{i}")]) for i in (1, 2, 3)],
+    )
+    interactions = _content(emit_interactive_video(spec))["interactiveVideo"]["assets"]["interactions"]
+    for i, one in enumerate(interactions):
+        for other in interactions[i + 1 :]:
+            share_screen = one["duration"]["from"] < other["duration"]["to"] and (
+                other["duration"]["from"] < one["duration"]["to"]
+            )
+            if share_screen:
+                assert (one["x"], one["y"]) != (other["x"], other["y"])
+
+
+def test_a_slot_is_reused_once_its_window_has_closed():
+    # The grid must not simply keep allocating: checks far apart in time should sit
+    # in the same, most readable position rather than marching down the frame.
+    spec = _spec(
+        source=TranscriptSource(filename="lecture.mp4", media_seconds=400.0),
+        chapters=[
+            Chapter(index=1, start=0.0, end=100.0, title="A"),
+            Chapter(index=2, start=100.0, end=200.0, title="B"),
+        ],
+        checks=[ChapterCheck(chapter_index=i, questions=[_mcq(f"q{i}")]) for i in (1, 2)],
+    )
+    interactions = _content(emit_interactive_video(spec))["interactiveVideo"]["assets"]["interactions"]
+    assert [(i["x"], i["y"]) for i in interactions] == [(20.0, 40.0), (20.0, 40.0)]
+
+
+def test_the_start_screen_title_is_escaped_like_every_other_text_field():
+    # The third string that reaches an H5P text field, and the one the first
+    # escaping pass missed — it comes straight off a query parameter.
+    spec = _spec(title='Weather <img src=x onerror=alert(1)> & tides')
+    title = _content(emit_interactive_video(spec))["interactiveVideo"]["video"]["startScreenOptions"]["title"]
+    assert "<img" not in title
+    assert "&lt;img" in title and "&amp; tides" in title
+
+
+def test_a_long_label_is_truncated_before_it_is_escaped():
+    # Escaping first and cutting second slices through an entity and leaves a
+    # dangling "&lt" on the learner's button.
+    question = _mcq()
+    question.prompt = "a < b " * 40
+    spec = _spec(checks=[ChapterCheck(chapter_index=1, questions=[question])])
+    label = _content(emit_interactive_video(spec))["interactiveVideo"]["assets"]["interactions"][0]["label"]
+    assert "&lt;" in label
+    assert not label.rstrip().endswith(("&", "&l", "&lt", "&a", "&am", "&amp"))
+
+
+def test_an_absurd_media_length_is_bounded_rather_than_crashing():
+    # media_seconds is a caller-supplied float. Flooring 1e308 raises OverflowError,
+    # which would turn a typo into a 500 after the package had been built.
+    spec = _spec(source=TranscriptSource(filename="lecture.mp4", media_seconds=1e308))
+    package = emit_interactive_video(spec)  # must not raise
+    assets = _content(package)["interactiveVideo"]["assets"]
+    assert all(i["duration"]["to"] <= 30 * 24 * 3600 for i in assets["interactions"])
+    assert assets["endscreens"][0]["time"] <= 30 * 24 * 3600
+
+
+def test_a_filename_longer_than_a_header_line_is_trimmed():
+    spec = _spec(source=TranscriptSource(filename="l" * 5000 + ".mp4", media_seconds=300.0))
+    filename = emit_interactive_video(spec).filename
+    assert len(filename) < 200
+    filename.encode("latin-1")

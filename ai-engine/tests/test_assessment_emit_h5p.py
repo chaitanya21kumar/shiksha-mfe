@@ -733,3 +733,21 @@ def test_a_models_remark_is_escaped_where_it_joins_the_criterion():
     included = _params(_set([item]))["keywords"][0]["options"]["feedbackIncluded"]
     assert "<script>" not in included
     assert "&lt;script&gt;" in included
+
+
+def test_the_warning_header_is_bounded_by_bytes_not_only_by_count():
+    # A single warning can quote the model's own reply, so ten of them run to five
+    # figures — and a header line over roughly 8 KB is refused by nginx and most
+    # proxies. The count header stays authoritative about how many there were.
+    from types import SimpleNamespace
+
+    from app.packaging.response import MAX_HEADER_WARNING_BYTES, package_response
+
+    long_warning = "Could not generate chapter titles: " + ("x" * 1200)
+    built = SimpleNamespace(content=b"zip", filename="a.h5p", warnings=[long_warning] * 10)
+    response = package_response(built)
+
+    header = response.headers["X-Package-Warnings"]
+    assert len(header) <= MAX_HEADER_WARNING_BYTES
+    assert json.loads(header)  # still valid JSON — whole entries are dropped, not bytes
+    assert response.headers["X-Package-Warning-Count"] == "10"
