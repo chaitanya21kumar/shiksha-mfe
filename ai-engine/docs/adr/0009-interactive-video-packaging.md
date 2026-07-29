@@ -39,14 +39,23 @@ A question is an `interactions[]` entry whose `action` is the same
 uses — so the mapping is **shared with the existing emitter** rather than written
 twice. `build_question_subcontent` in `assessment/emit/h5p.py` is that seam.
 
-**3. A question is placed at the end of the chapter its evidence came from.** Each
-chapter is handed to the *existing* assessment pipeline as one page of a document,
-which buys the same no-hallucination grounding gate, the same number of model
-calls as any other assessment, and — because that pipeline already attributes each
-question to the page its evidence came from — a `source_index` that **is** the
-chapter index. A question that cannot be attributed to a single chapter is
-reported and left out, because showing a learner a question about material they
-have not reached is worse than showing none.
+**3. A question is placed at the end of the chapter its evidence came from, and
+each chapter is generated for separately.** Every chapter is handed to the
+*existing* assessment pipeline as **its own single-page document**, which buys the
+same no-hallucination grounding gate, the same question→H5P mapping and the same
+warning discipline, with no second code path.
+
+Per chapter rather than once for the whole recording, because `generate_assessment`
+caps questions *per type across the document it is given*: handing it every chapter
+at once produces `count` questions for the entire video, and the model decides where
+they land. On a 40-minute lecture that means chapter 1 gets a check and the other
+twenty-three get nothing — while the endpoint claims a check per chapter. Since the
+promise of this module is a check at the end of *each* chapter, the loop over
+chapters belongs in Python, where it is deterministic, and not in a prompt asking a
+model to spread its output. It also makes grounding stricter: a question on chapter
+7 cannot be evidenced by chapter 2's text, because chapter 2 was never in the
+prompt. A chapter that yields nothing is named in the warnings rather than quietly
+left bare.
 
 **4. Short-answer questions cannot go into a video, and that is enforced.**
 Interactive Video permits **18** libraries and `H5P.Essay` is not one of them.
@@ -57,20 +66,39 @@ missing. `ALLOWED_INTERACTION_LIBRARIES` is checked in the shared seam, the
 endpoint does not offer `short_answer` at all, and a short answer that arrives
 anyway is dropped with a named warning.
 
-**5. `l10n` is written out in full — all 47 strings.** The player reads
-`this.l10n.<key>` with no fallback, so an absent block puts the literal word
-"undefined" on the learner's own controls. This is the same trap that produced
-`"undefined"` in MultiChoice (ADR-0004) and it is worse here because it hits the
-chrome, not one question. The values are taken from the library's own
-`semantics.json` defaults, which is where they are declared.
+**5. `l10n` is written out in full — all 47 strings — and twelve of them are
+load-bearing.** The runtime does default most of this block
+(`l10n = $.extend({interaction: "Interaction", …}, l10n)` — 38 keys), but the twelve
+`endcard*`/`endCard*` strings are **not** in that extend, and those are exactly what
+decision 6 below puts on the learner's screen. Emitting only the twelve would work;
+emitting all 47 costs a few hundred bytes and removes a dependency on someone else's
+default surviving a library upgrade. The values come from the library's own
+`semantics.json`, which is where they are declared.
 
-**6. `summary` and `goto` are deliberately omitted.** Both are read behind guards —
+**5a. `video.textTracks` is emitted even though it is empty.** The constructor
+merges its default with `$.extend({video: {textTracks: {videoTrack: []}}, …}, …)` —
+a **shallow** merge, no leading `true` — so writing a `video` object at all replaces
+that default wholesale. One read of the key is guarded; the one at the end of
+`getCopyrights` is not, and H5P core calls `getCopyrights` whenever the rights
+dialog is built, which is the platform default in Moodle. Omitting the key is a
+`TypeError` on the learner's page, from a field that looks purely optional.
+
+**6. One `endscreen` is emitted, because it is what turns the submit path on.**
+`hasStar = editor || undefined !== assets.endscreens && assets.endscreens.length && …`.
+With no endscreen `hasStar` is false for every package, and the star control, the
+score bubble, the end card and the "Submit Answers" button are all dead code — the
+learner answers every check and is never offered a way to hand them in. The runtime
+clamps an endscreen time past the media length back to the duration, so one placed
+at the end of the timeline is safe on a recording of any length. H5P's own published
+content ships exactly one.
+
+**7. `summary` and `goto` are deliberately omitted.** Both are read behind guards —
 `hasMainSummary()` returns false when the group is absent, and `goto` is only
 dereferenced after `&&` — and H5P's own published content omits them too. Emitting
 an empty `summary` would add `H5P.Summary` to the closure and show the learner a
 summary screen with nothing in it.
 
-**7. The dependency closure is 15 libraries, and editor dependencies are excluded.**
+**8. The dependency closure is 15 libraries, and editor dependencies are excluded.**
 Interactive Video's own runtime closure is eight; four of them were already pinned
 for the Question Set path, so it adds four: `H5P.InteractiveVideo 1.27`,
 `H5P.DragNBar 1.5`, `H5P.DragNDrop 1.1`, `H5P.DragNResize 1.2`. `DragNBar` is not
@@ -85,7 +113,14 @@ H5PEditor tree as a runtime requirement. The Hub's own package proves the rule �
 
 - **No new packaging machinery.** The manifest builder, the ZIP writer and the
   subcontent wrapper were already parameterised by ADR-0004; this passes a
-  different main library and closure to the same functions.
+  different main library and closure to the same functions. Three things that had
+  been private to the assessment emitter became shared when a second content type
+  needed them — the HTML escaper, the filename sanitiser and the package HTTP
+  response — because each is silently wrong when re-implemented rather than reused.
+- **Trade-off — one model call per chapter, not one per video.** Decision 3 buys
+  guaranteed per-chapter coverage at the cost of N calls. They are independent, so
+  they run concurrently under a small bound (four at a time), and chapters are
+  capped at 24, which bounds a single request.
 - **The three objective question types transfer unchanged.** Every library present
   in both whitelists is pinned at the *same* version in each — MultiChoice 1.16,
   Blanks 1.14, DragText 1.10 — so a question this engine already emits maps across

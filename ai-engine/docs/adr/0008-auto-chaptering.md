@@ -51,10 +51,27 @@ is whatever is left over, so it is the only one that can come out very short. A
 five-second chapter at the end of a lecture is a stub in the navigation bar, not a
 chapter.
 
-**6. The contract refuses overlapping or out-of-order chapters.** `ChapteredTranscript`
-validates that indexes run `1..n` and that no chapter starts before the previous one
-ended. Both faults produce perfectly well-formed JSON and a player that seeks the
-learner to the wrong place, so they are rejected at the boundary rather than trusted.
+**6. The contract refuses overlapping or out-of-order chapters, and the pipeline
+makes sure it never has to.** `ChapteredTranscript` validates that indexes run
+`1..n` and that no chapter starts before the previous one ended. Both faults produce
+perfectly well-formed JSON and a player that seeks the learner to the wrong place,
+so they are rejected at the boundary rather than trusted.
+
+That contract is a backstop, not an input filter, and the input is not ours: nothing
+in the `Transcript` contract obliges a provider to return segments in time order, and
+Whisper does emit repeated and overlapping cues on looping or noisy audio. Left
+alone, such a transcript reached the validator and surfaced as a **500 on a caller
+who did nothing wrong**. So the pipeline sorts by start time, computes a span's
+bounds as `min(start)`/`max(end)` rather than first/last, and folds a span that
+begins inside the previous one into it — a repeated cue is part of the chapter it
+sits inside, not a new one. The reordering is reported in `warnings`, because a
+caller comparing chapters against the provider's own segment numbering deserves to
+know they were moved.
+
+**7. A recording with no internal segment boundaries says so.** Boundaries can only
+fall *between* segments, so decision 3's overshoot ceiling is powerless when a
+provider returns one segment for a whole file. That case now carries a warning rather
+than handing back a single hour-long chapter that looks like a considered decision.
 
 ## Consequences
 
