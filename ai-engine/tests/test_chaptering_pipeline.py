@@ -13,6 +13,7 @@ import httpx
 import pytest
 
 from app.chaptering.pipeline import EmptyTranscriptError, generate_chapters
+from app.summarization.llm_client import LLMUnavailable
 from app.summarization.pipeline import GenerationConfig
 from app.transcription.schema import Transcript, TranscriptSegment, TranscriptSource
 
@@ -199,18 +200,18 @@ def test_a_title_returned_as_a_list_is_joined_rather_than_lost():
 
 def test_a_transcript_with_no_speech_is_rejected():
     empty = _transcript([TranscriptSegment(index=1, start=0, end=1, text="  ")])
+    handler = _titles_handler()
     with pytest.raises(EmptyTranscriptError):
-        _run(_titles_handler(), empty)
+        _run(handler, empty)
 
 
 def test_gateway_failures_propagate():
     def unreachable(request: httpx.Request) -> httpx.Response:
         raise httpx.ConnectError("refused")
 
-    from app.summarization.llm_client import LLMUnavailable
-
+    transcript = _transcript(_speech(4))
     with pytest.raises(LLMUnavailable):
-        _run(unreachable, _transcript(_speech(4)))
+        _run(unreachable, transcript)
 
 
 # --- input the provider is not obliged to give us in order --------------------

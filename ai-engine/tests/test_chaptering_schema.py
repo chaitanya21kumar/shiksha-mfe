@@ -10,7 +10,7 @@ from datetime import datetime, timezone
 import pytest
 from pydantic import ValidationError
 
-from app.chaptering.schema import Chapter, ChapteredTranscript
+from app.chaptering.schema import MAX_CHAPTERS, MAX_TITLE_CHARS, Chapter, ChapteredTranscript
 from app.transcription.schema import TranscriptSource
 
 
@@ -34,14 +34,16 @@ def test_a_chapter_end_may_not_precede_its_start():
 
 
 def test_chapters_must_be_numbered_one_to_n_in_order():
+    misnumbered = [_chapter(1, 0, 60), _chapter(3, 60, 120)]
     with pytest.raises(ValidationError, match="1..n"):
-        _chaptered([_chapter(1, 0, 60), _chapter(3, 60, 120)])
+        _chaptered(misnumbered)
 
 
 def test_chapters_may_not_overlap():
     # The second chapter starts before the first has finished.
+    overlapping = [_chapter(1, 0, 90), _chapter(2, 60, 150)]
     with pytest.raises(ValidationError, match="before the previous"):
-        _chaptered([_chapter(1, 0, 90), _chapter(2, 60, 150)])
+        _chaptered(overlapping)
 
 
 def test_touching_chapters_are_allowed():
@@ -76,19 +78,18 @@ def test_a_chaptered_transcript_round_trips_through_json():
     assert ChapteredTranscript.model_validate_json(original.model_dump_json()) == original
 
 
-def test_the_contract_bounds_the_chapter_count_and_title_length():
-    # POST /interactive-video takes a hand-built ChapteredTranscript, and a JSON
-    # body has no equivalent of the upload ceiling. The generator's own invariants
-    # therefore live on the contract, where the emitter can rely on them.
-    from app.chaptering.schema import MAX_CHAPTERS, MAX_TITLE_CHARS
+# POST /interactive-video takes a hand-built ChapteredTranscript, and a JSON body
+# has no equivalent of the upload ceiling. The generator's own invariants therefore
+# live on the contract, where the emitter can rely on them.
 
-    with pytest.raises(ValidationError):
-        Chapter(index=1, start=0.0, end=1.0, title="x" * (MAX_TITLE_CHARS + 1))
 
+def test_a_title_longer_than_the_contract_allows_is_rejected():
+    overlong = "x" * (MAX_TITLE_CHARS + 1)
     with pytest.raises(ValidationError):
-        _chaptered(
-            chapters=[
-                Chapter(index=i, start=float(i), end=float(i) + 1, title=f"C{i}")
-                for i in range(1, MAX_CHAPTERS + 2)
-            ]
-        )
+        Chapter(index=1, start=0.0, end=1.0, title=overlong)
+
+
+def test_more_chapters_than_the_contract_allows_are_rejected():
+    too_many = [_chapter(i, float(i), float(i) + 1, f"C{i}") for i in range(1, MAX_CHAPTERS + 2)]
+    with pytest.raises(ValidationError):
+        _chaptered(too_many)

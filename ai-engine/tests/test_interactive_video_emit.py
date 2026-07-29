@@ -200,8 +200,9 @@ def test_a_video_with_no_placeable_questions_still_packages_with_a_warning():
 
 
 def test_a_check_naming_a_chapter_that_does_not_exist_is_rejected():
+    orphaned = ChapterCheck(chapter_index=99, questions=[_mcq()])
     with pytest.raises(ValidationError, match="not in this video"):
-        _spec(checks=[ChapterCheck(chapter_index=99, questions=[_mcq()])])
+        _spec(checks=[orphaned])
 
 
 # --- the fields the runtime reads without defaulting --------------------------
@@ -237,7 +238,13 @@ def test_summary_is_omitted_because_the_runtime_guards_it():
 
 
 def test_the_package_is_byte_reproducible():
-    assert emit_interactive_video(_spec()).content == emit_interactive_video(_spec()).content
+    # Two independently built packages from two independently built specs. This is
+    # what lets the other tests assert on the artifact rather than on a
+    # re-implementation of it, so it has to be a real comparison of two builds.
+    first = emit_interactive_video(_spec()).content
+    second = emit_interactive_video(_spec()).content
+    assert first, "an empty package would make the comparison below meaningless"
+    assert first == second
 
 
 # --- the fields whose absence fails silently in the player --------------------
