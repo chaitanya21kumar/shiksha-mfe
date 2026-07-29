@@ -36,9 +36,16 @@ from ..ingestion.schema import Block, BlockKind, Page, ParsedDocument, SourceInf
 from ..summarization.pipeline import GenerationConfig
 from .schema import ChapterCheck, InteractiveVideoSpec, VideoSource
 
-#: How many chapters are generated for at once. Chapters are capped at 24, so this
-#: bounds a single request to a handful of concurrent calls on the gateway.
-_MAX_CONCURRENT_CHAPTERS = 4
+#: How many chapters are generated for at once.
+#:
+#: Two, not more, and the reason is the rate limiter rather than the gateway's
+#: throughput. The client paces itself against the budget each reply reports, and
+#: a wide burst defeats that: every call in the burst is sent before any of their
+#: replies come back, so none of them can see how little was left. Two in flight
+#: keeps at most one call's worth of budget unaccounted for, which is inside the
+#: headroom the governor keeps. Chapters are capped at 24, so this also bounds a
+#: single request to a predictable number of calls.
+_MAX_CONCURRENT_CHAPTERS = 2
 
 
 @dataclass(frozen=True)

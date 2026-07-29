@@ -35,7 +35,7 @@ import httpx
 from pydantic import AliasChoices, BaseModel, Field, ValidationError, field_validator
 
 from ..ingestion.schema import Block, BlockKind, Page, ParsedDocument
-from ..summarization.llm_client import LLMBadResponse, chat_json
+from ..summarization.llm_client import LLMBadResponse, chat_json_for
 from ..summarization.pipeline import EmptyDocumentError, GenerationConfig
 from . import prompts
 from .grading import normalise, point_is_made, score_short_answer
@@ -556,14 +556,11 @@ async def _generate_type(
     caller fails the request); an unusable response degrades to an empty list.
     """
     try:
-        raw = await chat_json(
+        raw = await chat_json_for(
             client,
-            base_url=config.base_url,
-            api_key=config.api_key,
-            model=config.model,
+            config,
             system=prompts.SYSTEM,
             user=_SPECS[qtype].prompt(numbered, count + _SPARE_QUESTIONS),
-            temperature=config.temperature,
         )
     except LLMBadResponse as exc:
         logger.warning("Could not generate %s questions: %s", qtype, exc)

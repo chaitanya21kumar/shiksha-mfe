@@ -15,17 +15,24 @@ status without re-inspecting raw httpx errors.
 from __future__ import annotations
 
 import json
+import logging
 from asyncio import sleep as _sleep
 from typing import Any
 
 import httpx
 
-# A rate-limited request (HTTP 429) is retried a few times with backoff. The wait
-# honours the gateway's Retry-After when present, but is capped so a request can
-# never hang on a long one.
-_MAX_RETRIES = 2
-_BASE_BACKOFF = 1.0  # seconds, doubled each retry
-_MAX_RETRY_WAIT = 20.0
+from .ratelimit import governor, parse_duration
+
+logger = logging.getLogger("ai_engine.llm")
+
+# A rate-limited request (HTTP 429) is retried with backoff, and the wait honours
+# the gateway's own Retry-After. The cap is deliberately above a minute: a free
+# tier's token window is a minute long, so a shorter cap retries *before* the
+# budget has refilled, spends every attempt on the same refusal, and reports a
+# rate limit the caller could simply have waited out.
+_MAX_RETRIES = 4
+_BASE_BACKOFF = 1.5  # seconds, doubled each retry
+_MAX_RETRY_WAIT = 65.0
 
 
 class LLMError(Exception):
@@ -74,10 +81,15 @@ async def chat_json(
     headers = {"Authorization": f"Bearer {api_key}"}
 
     for attempt in range(max_retries + 1):
+        # Pace against what the gateway last told us was left, so a burst of calls
+        # waits out the window instead of provoking a refusal it then has to
+        # recover from. No-op on any gateway that does not report a budget.
+        await governor.wait_for_room(base_url)
         try:
             response = await client.post(
                 f"{base_url}/chat/completions", json=payload, headers=headers
             )
+            governor.observe(base_url, response.headers)
             response.raise_for_status()
         except (httpx.ConnectError, httpx.ConnectTimeout) as exc:
             raise LLMUnavailable(f"Could not reach the model gateway at {base_url}: {exc}") from exc
@@ -85,7 +97,29 @@ async def chat_json(
             raise LLMTimeout(f"Generation timed out after {client.timeout.read}s") from exc
         except httpx.HTTPStatusError as exc:
             if exc.response.status_code == 429 and attempt < max_retries:
-                await _sleep(_retry_after(exc.response, attempt))
+                governor.observe(base_url, exc.response.headers)
+                wait = _retry_after(exc.response, attempt)
+                if _cooldown_exceeds_patience(exc.response):
+                    # The gateway is asking for longer than we will wait — a daily
+                    # allowance rather than a per-minute window. Sleeping through
+                    # four more attempts changes nothing except how long the caller
+                    # waits to hear it, and a configured fallback can serve now.
+                    logger.warning(
+                        "%s wants %ss before the next request; not retrying here",
+                        base_url, exc.response.headers.get("retry-after"),
+                    )
+                    raise _status_error(exc) from exc
+                # Log which budget was hit. A rate limit is the one failure whose
+                # cause is stated in the reply, and losing that makes it look random.
+                logger.warning(
+                    "Rate-limited by %s (attempt %d/%d), waiting %.1fs — %s",
+                    base_url, attempt + 1, max_retries + 1, wait,
+                    "; ".join(
+                        f"{k}={v}" for k, v in exc.response.headers.items()
+                        if k.startswith("x-ratelimit") or k == "retry-after"
+                    ) or "no budget headers",
+                )
+                await _sleep(wait)
                 continue
             raise _status_error(exc) from exc
         except httpx.HTTPError as exc:  # other transport faults: DNS, broken pipe, …
@@ -96,15 +130,26 @@ async def chat_json(
     raise LLMUnavailable("The model gateway is rate-limited (HTTP 429).")
 
 
+def _cooldown_exceeds_patience(response: httpx.Response) -> bool:
+    """Is the gateway asking us to wait longer than retrying could possibly help?"""
+    asked = parse_duration(response.headers.get("retry-after", ""))
+    return asked is not None and asked > _MAX_RETRY_WAIT
+
+
 def _retry_after(response: httpx.Response, attempt: int) -> float:
-    """How long to wait before retrying a rate-limited request."""
-    header = response.headers.get("retry-after")
-    if header:
-        try:
-            return min(float(header), _MAX_RETRY_WAIT)
-        except ValueError:
-            pass
-    return min(_BASE_BACKOFF * (2**attempt), _MAX_RETRY_WAIT)
+    """How long to wait before retrying a rate-limited request.
+
+    Three sources, in order of authority: the standard ``Retry-After``, the
+    gateway's own statement of when the token window turns over, and finally
+    exponential backoff. Taking the *longest* of what is known, because retrying
+    early on a token limit simply spends another attempt on the same refusal.
+    """
+    waits = [_BASE_BACKOFF * (2**attempt)]
+    for header in ("retry-after", "x-ratelimit-reset-tokens", "x-ratelimit-reset-requests"):
+        value = parse_duration(response.headers.get(header, ""))
+        if value is not None:
+            waits.append(value + 0.5)  # a beat past the reset, not exactly on it
+    return min(max(waits), _MAX_RETRY_WAIT)
 
 
 def _status_error(exc: httpx.HTTPStatusError) -> LLMError:
@@ -137,3 +182,50 @@ def _extract_content(response: httpx.Response) -> dict[str, Any]:
     if not isinstance(parsed, dict):
         raise LLMBadResponse("Model output was valid JSON but not an object.")
     return parsed
+
+
+async def chat_json_for(
+    client: httpx.AsyncClient,
+    config,
+    *,
+    system: str,
+    user: str,
+) -> dict[str, Any]:
+    """Run one chat completion for a `GenerationConfig`, failing over if it must.
+
+    The engine speaks one contract to every provider, which is what makes a second
+    gateway three settings rather than a second code path. The failover is
+    deliberately narrow: it triggers only on `LLMUnavailable` — a gateway that is
+    unreachable, refusing the key, or out of budget — and never on a timeout or on
+    a reply we simply could not use, because retrying those elsewhere would hide a
+    real fault behind a slower one.
+
+    With no fallback configured this is exactly `chat_json`, which is the default.
+    """
+    try:
+        return await chat_json(
+            client,
+            base_url=config.base_url,
+            api_key=config.api_key,
+            model=config.model,
+            system=system,
+            user=user,
+            temperature=config.temperature,
+        )
+    except LLMUnavailable:
+        fallback_url = getattr(config, "fallback_base_url", "")
+        fallback_key = getattr(config, "fallback_api_key", "")
+        if not (fallback_url and fallback_key):
+            raise
+        logger.warning(
+            "Primary gateway unavailable; falling back to %s", fallback_url
+        )
+        return await chat_json(
+            client,
+            base_url=fallback_url,
+            api_key=fallback_key,
+            model=getattr(config, "fallback_model", "") or config.model,
+            system=system,
+            user=user,
+            temperature=config.temperature,
+        )

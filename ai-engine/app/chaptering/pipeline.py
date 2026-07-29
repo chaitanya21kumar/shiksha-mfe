@@ -22,7 +22,7 @@ from datetime import datetime, timezone
 import httpx
 from pydantic import BaseModel, Field, ValidationError, field_validator
 
-from ..summarization.llm_client import LLMBadResponse, chat_json
+from ..summarization.llm_client import LLMBadResponse, chat_json_for
 from ..summarization.pipeline import GenerationConfig
 from ..transcription.schema import Transcript, TranscriptSegment
 from . import prompts
@@ -176,15 +176,9 @@ async def _titles(
     fallback title and a warning rather than failing the whole request.
     """
     try:
-        raw = await chat_json(
-            client,
-            base_url=config.base_url,
-            api_key=config.api_key,
-            model=config.model,
-            system=prompts.SYSTEM,
-            user=prompts.title_prompt(numbered),
-            temperature=config.temperature,
-        )
+        raw = await chat_json_for(
+                client, config, system=prompts.SYSTEM, user=prompts.title_prompt(numbered)
+            )
         parsed = _TitleResponse.model_validate(raw)
     except (LLMBadResponse, ValidationError) as exc:
         logger.warning("Could not generate chapter titles: %s", exc)
