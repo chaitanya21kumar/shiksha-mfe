@@ -1,0 +1,76 @@
+"""Tests for the Module C.2 contract.
+
+The ordering rules matter more than they look: chapters become bookmarks in a
+player's navigation bar, so an overlapping or out-of-order list seeks the learner
+to the wrong place while the JSON still looks perfectly well-formed.
+"""
+
+from datetime import datetime, timezone
+
+import pytest
+from pydantic import ValidationError
+
+from app.chaptering.schema import Chapter, ChapteredTranscript
+from app.transcription.schema import TranscriptSource
+
+
+def _chaptered(chapters: list[Chapter]) -> ChapteredTranscript:
+    return ChapteredTranscript(
+        source=TranscriptSource(filename="lecture.mp4", media_seconds=300.0),
+        generator="groq",
+        model="llama-3.1-8b-instant",
+        generated_at=datetime.now(timezone.utc),
+        chapters=chapters,
+    )
+
+
+def _chapter(index, start, end, title="Something"):
+    return Chapter(index=index, start=start, end=end, title=title)
+
+
+def test_a_chapter_end_may_not_precede_its_start():
+    with pytest.raises(ValidationError):
+        Chapter(index=1, start=90.0, end=30.0, title="Backwards")
+
+
+def test_chapters_must_be_numbered_one_to_n_in_order():
+    with pytest.raises(ValidationError, match="1..n"):
+        _chaptered([_chapter(1, 0, 60), _chapter(3, 60, 120)])
+
+
+def test_chapters_may_not_overlap():
+    # The second chapter starts before the first has finished.
+    with pytest.raises(ValidationError, match="before the previous"):
+        _chaptered([_chapter(1, 0, 90), _chapter(2, 60, 150)])
+
+
+def test_touching_chapters_are_allowed():
+    # end == next start is the normal case: contiguous coverage, no overlap.
+    result = _chaptered([_chapter(1, 0, 90), _chapter(2, 90, 180)])
+    assert [c.index for c in result.chapters] == [1, 2]
+
+
+def test_a_gap_between_chapters_is_allowed():
+    # Silence between chapters is legitimate; only going backwards is not.
+    result = _chaptered([_chapter(1, 0, 60), _chapter(2, 75, 150)])
+    assert result.chapters[1].start == 75
+
+
+def test_duration_is_derived_not_stored():
+    assert _chapter(1, 30.0, 105.5).duration == 75.5
+
+
+def test_a_chaptered_transcript_round_trips_through_json():
+    original = _chaptered(
+        [
+            Chapter(
+                index=1,
+                start=0.0,
+                end=90.0,
+                title="The water cycle",
+                segment_indexes=[1, 2, 3],
+                text="Evaporation lifts water into the air.",
+            )
+        ]
+    )
+    assert ChapteredTranscript.model_validate_json(original.model_dump_json()) == original
