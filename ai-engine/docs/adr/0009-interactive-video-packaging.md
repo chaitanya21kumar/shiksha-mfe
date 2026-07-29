@@ -60,17 +60,19 @@ left bare.
 **4. Short-answer questions cannot go into a video, and that is enforced.**
 Interactive Video permits **18** libraries and `H5P.Essay` is not one of them.
 This is not a soft failure: `H5PContentValidator` checks
-`in_array($value->library, $libraryNames)`, so a non-whitelisted interaction is
-**stripped at import** — the video plays perfectly with the question quietly
-missing. `ALLOWED_INTERACTION_LIBRARIES` is checked in the shared seam, the
+`in_array($value->library, $libraryNames)` and sets `$value = NULL`, so a
+non-whitelisted interaction is **stripped** — the video imports and plays perfectly
+with the question quietly missing. Core does call `setErrorMessage`, but only on
+the `filterParameters` path, and `H5PStorage::savePackage` never takes it, so
+uploading the package reports nothing at all. `ALLOWED_INTERACTION_LIBRARIES` is checked in the shared seam, the
 endpoint does not offer `short_answer` at all, and a short answer that arrives
 anyway is dropped with a named warning.
 
 **5. `l10n` is written out in full — all 47 strings — and twelve of them are
 load-bearing.** The runtime does default most of this block
-(`l10n = $.extend({interaction: "Interaction", …}, l10n)` — 38 keys), but the twelve
-`endcard*`/`endCard*` strings are **not** in that extend, and those are exactly what
-decision 6 below puts on the learner's screen. Emitting only the twelve would work;
+(`l10n = $.extend({interaction: "Interaction", …}, l10n)` — 36 keys, 35 of which are
+`l10n` fields), but the twelve `endcard*`/`endCard*` strings are **not** in that
+extend, and those are exactly what decision 6 below puts on the learner's screen. Emitting only the twelve would work;
 emitting all 47 costs a few hundred bytes and removes a dependency on someone else's
 default surviving a library upgrade. The values come from the library's own
 `semantics.json`, which is where they are declared.
@@ -94,9 +96,11 @@ content ships exactly one.
 
 **7. `summary` and `goto` are deliberately omitted.** Both are read behind guards —
 `hasMainSummary()` returns false when the group is absent, and `goto` is only
-dereferenced after `&&` — and H5P's own published content omits them too. Emitting
-an empty `summary` would add `H5P.Summary` to the closure and show the learner a
-summary screen with nothing in it.
+dereferenced after `&&` — so leaving them out is safe. The Hub's own sample content
+*does* carry both, and that is not a counter-argument: it was authored by hand in
+the editor, and nothing in this engine generates a summary task or branching logic.
+Emitting an empty `summary` would add `H5P.Summary` to the closure and show the
+learner a summary screen with nothing in it.
 
 **8. The dependency closure is 15 libraries, and editor dependencies are excluded.**
 Interactive Video's own runtime closure is eight; four of them were already pinned
