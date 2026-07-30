@@ -32,16 +32,17 @@ grading.
 
 from __future__ import annotations
 
-import html
 import re
-from typing import NamedTuple
 
 from ...packaging.h5p import (
     BLANKS,
     DRAGTEXT,
     ESSAY,
     MULTICHOICE,
+    H5PPackage,
     build_manifest,
+    escape_text,
+    sanitise_filename,
     write_h5p,
     wrap,
 )
@@ -68,14 +69,6 @@ _MATH_SPAN = re.compile(r"\$\$.+?\$\$|\\\[.+?\\\]|\\\(.+?\\\)", re.DOTALL)
 _MATH_OPENER = re.compile(r"\$\$|\\\(|\\\[")
 
 
-class H5PPackage(NamedTuple):
-    """A built ``.h5p`` and anything the caller should know about it."""
-
-    content: bytes
-    filename: str
-    warnings: list[str]
-
-
 class _Unrenderable(Exception):
     """A question H5P cannot express faithfully, and why.
 
@@ -89,15 +82,9 @@ class _Unrenderable(Exception):
         self.reason = reason
 
 
-def _escape(text: str) -> str:
-    """Escape model text for an H5P field. Quotes are left alone: these are text
-    nodes, not attribute values, and escaping them only hurts readability."""
-    return html.escape(text or "", quote=False)
-
-
 def _paragraph(text: str) -> str:
     """H5P's rich-text fields hold a paragraph; this is the shape its editor writes."""
-    return f"<p>{_escape(text)}</p>\n"
+    return f"<p>{escape_text(text)}</p>\n"
 
 
 # --- markup safety -----------------------------------------------------------
@@ -242,7 +229,7 @@ def _overall_feedback(bands: list[ScoreBand]) -> list[dict[str, object]]:
     rubric can be supplied by a caller rather than written by us.
     """
     return [
-        {"from": band.from_percent, "to": band.to_percent, "feedback": _escape(band.feedback)}
+        {"from": band.from_percent, "to": band.to_percent, "feedback": escape_text(band.feedback)}
         for band in bands
     ]
 
@@ -251,7 +238,7 @@ def _explanation_feedback(explanation: str | None) -> list[dict[str, object]]:
     """A question's rationale has no dedicated H5P slot; a 0-100 band always shows."""
     if not explanation:
         return []
-    return [{"from": 0, "to": 100, "feedback": _escape(explanation)}]
+    return [{"from": 0, "to": 100, "feedback": escape_text(explanation)}]
 
 
 def _mcq_params(item: MCQItem) -> dict[str, object]:
@@ -264,10 +251,10 @@ def _mcq_params(item: MCQItem) -> dict[str, object]:
                 # index; its defaults.answers[0] is {correct: true}, so an omitted
                 # key on the first answer silently turns it correct.
                 "correct": choice.is_correct,
-                "text": f"<div>{_escape(choice.text)}</div>\n",
+                "text": f"<div>{escape_text(choice.text)}</div>\n",
                 "tipsAndFeedback": {
                     "tip": "",
-                    "chosenFeedback": _escape(choice.feedback or ""),
+                    "chosenFeedback": escape_text(choice.feedback or ""),
                     "notChosenFeedback": "",
                 },
             }
@@ -322,7 +309,7 @@ def _blanks_text(item: FillBlankItem) -> str:
         # It round-trips — parseSolution entity-decodes each solution before
         # grading, and a tip is rendered through jQuery's .html(), which parses
         # the entity back.
-        markup = "/".join(_escape(answer) for answer in answers)
+        markup = "/".join(escape_text(answer) for answer in answers)
         tip = (blank.tip or "").strip()
         if tip:
             # Only append a tip that survives stripping: a whitespace-only tip
@@ -330,7 +317,7 @@ def _blanks_text(item: FillBlankItem) -> str:
             # real (empty) tip.
             if not _safe_blank_tip(tip):
                 raise _Unrenderable(_MARKUP_REASON)
-            markup = f"{markup}:{_escape(tip)}"
+            markup = f"{markup}:{escape_text(tip)}"
         replacements[position] = f"*{markup}*"
 
     def substitute(match: re.Match[str]) -> str:
@@ -338,7 +325,7 @@ def _blanks_text(item: FillBlankItem) -> str:
 
     # Escape the sentence first, then write the markup into it: escaping afterwards
     # would mangle the asterisks we just added.
-    escaped = _escape(item.text)
+    escaped = escape_text(item.text)
     return f"<p>{_BLANK_MARKER.sub(substitute, escaped)}</p>\n"
 
 
@@ -381,7 +368,7 @@ def _dragtext_fields(item: MatchItem) -> tuple[str, str]:
             raise _Unrenderable(f"{source.id} points at a target that does not exist")
         if not _safe_drag_line(source.text) or not _safe_drag_target(target.text):
             raise _Unrenderable(drag_reason)
-        lines.append(f"{_escape(source.text.strip())} — *{_escape(target.text.strip())}*")
+        lines.append(f"{escape_text(source.text.strip())} — *{escape_text(target.text.strip())}*")
 
     matched = {source.target_id for source in item.sources}
     distractors: list[str] = []
@@ -390,7 +377,7 @@ def _dragtext_fields(item: MatchItem) -> tuple[str, str]:
             continue
         if not _safe_drag_target(target.text):
             raise _Unrenderable(drag_reason)
-        distractors.append(f"*{_escape(target.text.strip())}*")
+        distractors.append(f"*{escape_text(target.text.strip())}*")
 
     return "\n".join(lines), " ".join(distractors)
 
@@ -405,8 +392,8 @@ _MISS_MARK = "✗"
 
 def _criterion_feedback(mark: str, criterion: str, remark: str | None) -> str:
     """One row of the mark scheme, named and marked made-or-missed."""
-    line = f"{mark} {_escape(criterion)}"
-    return f"{line} — {_escape(remark)}" if remark else line
+    line = f"{mark} {escape_text(criterion)}"
+    return f"{line} — {escape_text(remark)}" if remark else line
 
 
 def _essay_params(item: ShortAnswerItem) -> dict[str, object]:
@@ -422,7 +409,7 @@ def _essay_params(item: ShortAnswerItem) -> dict[str, object]:
     # promises would exist only in the SCORM player. Essay has no slot for a named
     # criterion, so each key point's text becomes its own hit/miss feedback and the
     # whole scheme is listed above the sample answer.
-    scheme = "".join(f"<li>{_escape(point.text)}</li>" for point in item.key_points)
+    scheme = "".join(f"<li>{escape_text(point.text)}</li>" for point in item.key_points)
     return {
         "taskDescription": _paragraph(item.prompt),
         "placeholderText": "Answer in two or three sentences, in your own words.",
@@ -432,8 +419,8 @@ def _essay_params(item: ShortAnswerItem) -> dict[str, object]:
         },
         "keywords": [
             {
-                "keyword": _escape(point.accepted[0]),
-                "alternatives": [_escape(form) for form in point.accepted[1:]],
+                "keyword": escape_text(point.accepted[0]),
+                "alternatives": [escape_text(form) for form in point.accepted[1:]],
                 # `options` must be COMPLETE. essay.js reads `alternativeGroup.options`
                 # with no `|| {}` guard and then dereferences `.points` and
                 # `.occurrences` — so a missing group is a TypeError that takes the
@@ -543,7 +530,7 @@ def _wrap_question(
         return None
 
 
-def _build(question: Question, assessment_id: str) -> dict[str, object] | None:
+def _build(question: Question, assessment_id: str) -> dict[str, object]:
     """Map one question to a subcontent wrapper, or say why it cannot be."""
     problem = _latex_problem(question)
     if problem is not None:
@@ -596,6 +583,36 @@ def _build(question: Question, assessment_id: str) -> dict[str, object] | None:
     raise _Unrenderable(f"{question.type} is not a type the H5P emitter can package")
 
 
+#: Public name for the "cannot be expressed" signal, so other H5P emitters can
+#: catch it without reaching for a private symbol.
+UnrenderableQuestion = _Unrenderable
+
+
+def build_question_subcontent(
+    question: Question,
+    assessment_id: str,
+    *,
+    allowed: frozenset[str] | None = None,
+) -> dict[str, object]:
+    """Map one question onto an H5P subcontent entry, or say why it cannot be.
+
+    This is the seam Module C's interactive video builds on: an interaction's
+    ``action`` is the same ``{library, params, subContentId, metadata}`` shape a
+    Question Set child uses, so the mapping is shared rather than written twice.
+
+    ``allowed`` is the host content type's own library whitelist. Passing it
+    matters because **the whitelists genuinely differ** — Interactive Video
+    permits eighteen libraries and ``H5P.Essay`` is not among them, so a
+    short-answer question that packages fine into a Question Set cannot go into a
+    video. Checking here keeps that rule in one place for every caller.
+    """
+    built = _build(question, assessment_id)
+    library = str(built["library"])
+    if allowed is not None and library not in allowed:
+        raise _Unrenderable(f"{library} is not a library this content type accepts")
+    return built
+
+
 def _question_set(assessment: AssessmentSet, questions: list[dict[str, object]]) -> dict[str, object]:
     bands = assessment.score_bands or default_score_bands(assessment.pass_percentage)
     title = assessment.source.title or assessment.source.filename
@@ -604,7 +621,7 @@ def _question_set(assessment: AssessmentSet, questions: list[dict[str, object]])
             "showIntroPage": True,
             # Escaped: questionset.js concatenates this straight into the intro
             # page's HTML, and it can come from an uploaded document's filename.
-            "title": _escape(title),
+            "title": escape_text(title),
             "introduction": "<p>Answer all questions.</p>\n",
             "startButtonText": "Start Quiz",
         },
@@ -646,9 +663,8 @@ def _question_set(assessment: AssessmentSet, questions: list[dict[str, object]])
 
 
 def _filename(assessment: AssessmentSet) -> str:
-    stem = assessment.source.filename.rsplit(".", 1)[0] or "assessment"
-    safe = re.sub(r"[^A-Za-z0-9._-]+", "-", stem).strip("-") or "assessment"
-    return f"{safe}.h5p"
+    stem = assessment.source.filename.rsplit(".", 1)[0]
+    return f"{sanitise_filename(stem, fallback='assessment')}.h5p"
 
 
 def emit_h5p(assessment: AssessmentSet) -> H5PPackage:

@@ -6,14 +6,18 @@ that model (for Module B, ``app/assessment/emit/h5p.py``).
 """
 
 from .manifest import build_manifest, sanitise_language, sanitise_title
-from .package import CONTENT_NAME, MANIFEST_NAME, write_h5p
+from .package import CONTENT_NAME, MANIFEST_NAME, H5PPackage, write_h5p
+from ..naming import escape_text, sanitise_filename
 from .subcontent import subcontent_id, wrap
 from .versions import (
+    ALLOWED_INTERACTION_LIBRARIES,
     ALLOWED_QUESTION_LIBRARIES,
     BLANKS,
     CLOSURE,
     DRAGTEXT,
     ESSAY,
+    INTERACTIVE_VIDEO,
+    INTERACTIVE_VIDEO_CLOSURE,
     MULTICHOICE,
     QUESTIONSET,
     Library,
@@ -22,19 +26,25 @@ from .versions import (
 )
 
 __all__ = [
+    "ALLOWED_INTERACTION_LIBRARIES",
     "ALLOWED_QUESTION_LIBRARIES",
     "BLANKS",
     "CLOSURE",
     "CONTENT_NAME",
     "DRAGTEXT",
     "ESSAY",
+    "H5PPackage",
+    "INTERACTIVE_VIDEO",
+    "INTERACTIVE_VIDEO_CLOSURE",
     "Library",
     "MANIFEST_NAME",
     "MULTICHOICE",
     "QUESTIONSET",
     "build_manifest",
     "dependency",
+    "escape_text",
     "library_string",
+    "sanitise_filename",
     "sanitise_language",
     "sanitise_title",
     "subcontent_id",

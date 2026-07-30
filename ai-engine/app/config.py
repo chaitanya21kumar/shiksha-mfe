@@ -46,6 +46,15 @@ class Settings(BaseSettings):
     # far slower than the readiness probe; a low temperature keeps output
     # faithful to the source and reproducible.
     llm_request_timeout: float = 120.0
+
+    # An optional SECOND gateway, tried only when the first one cannot serve the
+    # request — in practice when a free tier's token window is exhausted. The
+    # engine already speaks one contract to every provider, so a failover costs
+    # three settings and no new code path. Leave the key empty to disable it.
+    llm_fallback_base_url: str = ""
+    llm_fallback_api_key: str = ""
+    llm_fallback_model: str = ""
+    llm_fallback_provider: str = ""
     llm_temperature: float = 0.2
     max_source_chars: int = 24000
 

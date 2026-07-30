@@ -18,10 +18,9 @@ from typing import Annotated
 import httpx
 from fastapi import APIRouter, Depends, File, UploadFile
 
-from ..config import settings
 from ..ingestion.schema import ParsedDocument
 from ..ingestion.service import parse_upload
-from ..summarization.pipeline import GenerationConfig
+from ..summarization.pipeline import generation_config
 from ..summarization.router import get_llm_client
 from .pipeline import generate_narration
 from .schema import NarrationScript
@@ -35,24 +34,13 @@ _ERROR_RESPONSES = {
 }
 
 
-def _generation_config() -> GenerationConfig:
-    return GenerationConfig(
-        base_url=settings.llm_base_url,
-        api_key=settings.llm_api_key,
-        model=settings.llm_model,
-        provider=settings.llm_provider,
-        temperature=settings.llm_temperature,
-        max_source_chars=settings.max_source_chars,
-    )
-
-
 @router.post("/narrate", responses=_ERROR_RESPONSES)
 async def narrate(
     document: ParsedDocument,
     client: Annotated[httpx.AsyncClient, Depends(get_llm_client)],
 ) -> NarrationScript:
     """Derive a spoken narration script from an already-parsed document."""
-    return await generate_narration(client, document, _generation_config())
+    return await generate_narration(client, document, generation_config())
 
 
 @router.post(
@@ -65,4 +53,4 @@ async def narrate_file(
 ) -> NarrationScript:
     """Parse an uploaded document and derive a narration script in one call."""
     document = await parse_upload(file)
-    return await generate_narration(client, document, _generation_config())
+    return await generate_narration(client, document, generation_config())

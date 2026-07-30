@@ -38,8 +38,8 @@ estimate — exposed at `POST /narrate` and `POST /narrate/file`.
 short-answer questions — exposed at `POST /assess` and `POST /assess/file`. Every question is
 verified against the source and dropped if it cannot be grounded, so nothing is
 hallucinated. The contract is neutral: it carries stable ids and structured
-answers so it can be packaged, in later PRs, as an H5P Question Set, a SCORM 1.2
-package, and xAPI statements without changing shape. See
+answers so it can be packaged as an H5P Question Set and a SCORM 1.2 course —
+both of which now ship — and, later, as xAPI statements, without changing shape. See
 [`docs/adr/0003`](docs/adr/0003-neutral-assessment-contract-and-grounding.md).
 
 **Module B packaging** turns that `AssessmentSet` into an **H5P Question Set**
@@ -49,8 +49,7 @@ to `H5P.MultiChoice`, fill-in-the-blank to `H5P.Blanks`, and match-the-pair to
 distractors express one cleanly). The rubric — per-question points, a mastery
 threshold, and score bands — rides along, and LaTeX renders through H5P's
 MathDisplay. The emitter is pure Python and writes the ZIP directly; see
-[`docs/adr/0004`](docs/adr/0004-pure-python-h5p-packaging.md). The later modules
-follow.
+[`docs/adr/0004`](docs/adr/0004-pure-python-h5p-packaging.md).
 
 **Short answers** are the one type a learner writes in their own words. Because a
 packaged quiz runs inside the LMS with no model available, they are marked by a
@@ -80,6 +79,30 @@ Moodle surfaces in its Interactions report. LaTeX is shown as source rather than
 typeset — a SCORM package would have to carry its own maths renderer, which is
 tracked separately. See
 [`docs/adr/0005`](docs/adr/0005-scorm-12-packaging.md).
+
+**Module C** (multimedia intelligence) starts where a document ends: a recording.
+`POST /transcribe` turns an audio or video upload into a **time-aligned
+transcript**, rendered as WebVTT or SRT subtitles or plain text, through the same
+OpenAI-compatible contract the text models use — the audio endpoint is
+`/audio/transcriptions`, which Groq serves with `whisper-large-v3` and a local
+`faster-whisper` serves identically. See
+[`docs/adr/0007`](docs/adr/0007-transcription-provider-strategy.md).
+
+`POST /chapter` divides that transcript into **titled, timed chapters**. The
+division is deterministic — Python walks the transcript's own segment timings and
+breaks at a natural pause once a chapter has run long enough — and the model only
+writes the headings, because a model asked for timestamps invents them. See
+[`docs/adr/0008`](docs/adr/0008-auto-chaptering.md).
+
+`POST /interactive-video` composes the two into an **`H5P.InteractiveVideo`**: the
+chapters become marks on the player's navigation bar, and each one ends with a
+knowledge check that pauses the video. The questions come from the *existing*
+assessment pipeline — every chapter is handed to it as its own small document — so
+the grounding gate and the question-to-H5P mapping are shared rather than written
+twice. The media is referenced by URL rather than bundled, which is what H5P's own
+published content does and what keeps a lecture recording under an LMS upload
+limit. `POST /interactive-video/file` runs the whole chain from one upload. See
+[`docs/adr/0009`](docs/adr/0009-interactive-video-packaging.md).
 
 ## Requirements
 
@@ -115,6 +138,12 @@ Then:
 - `POST /assess/h5p/file` — parse, generate and package in one call
 - `POST /assess/scorm` — package an assessment as a SCORM 1.2 course (`.zip`)
 - `POST /assess/scorm/file` — parse, generate and package as SCORM in one call
+- `POST /transcribe` — transcribe an audio or video upload (JSON, WebVTT, SRT or plain text)
+- `POST /chapter` — divide a transcript into titled, timed chapters
+- `POST /chapter/file` — transcribe a recording and chapter it in one call
+- `POST /interactive-video` — package a chaptered transcript as an H5P Interactive Video (`.h5p`)
+- `POST /interactive-video/file` — transcribe, chapter, generate checks and package in one call
+- `GET /` — service banner
 - `GET /docs` — interactive API docs
 
 ## Test
@@ -126,4 +155,6 @@ pytest
 ## Configuration
 
 All settings are environment variables prefixed `AI_ENGINE_` (or a local
-`.env`). See [`.env.example`](.env.example) for the full list and defaults.
+`.env`). [`.env.example`](.env.example) carries the ones you are expected to set;
+`app/config.py` is the complete list, and every field there is overridable with the
+same `AI_ENGINE_` prefix.

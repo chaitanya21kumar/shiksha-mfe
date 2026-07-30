@@ -17,8 +17,11 @@ from fastapi.responses import JSONResponse
 
 from .assessment.emit import EmptyAssessmentError
 from .assessment.router import router as assessment_router
+from .chaptering.pipeline import EmptyTranscriptError
+from .chaptering.router import router as chaptering_router
 from .config import settings
 from .ingestion.router import router as ingestion_router
+from .interactive_video.router import router as interactive_video_router
 from .narration.router import router as narration_router
 from .summarization.llm_client import LLMTimeout, LLMUnavailable
 from .summarization.pipeline import EmptyDocumentError
@@ -110,6 +113,10 @@ def create_app() -> FastAPI:
     async def _on_empty_document(request: Request, exc: EmptyDocumentError) -> JSONResponse:
         return JSONResponse(status_code=400, content={"detail": str(exc)})
 
+    @app.exception_handler(EmptyTranscriptError)
+    async def _on_empty_transcript(request: Request, exc: EmptyTranscriptError) -> JSONResponse:
+        return JSONResponse(status_code=400, content={"detail": str(exc)})
+
     @app.exception_handler(EmptyAssessmentError)
     async def _on_empty_assessment(request: Request, exc: EmptyAssessmentError) -> JSONResponse:
         return JSONResponse(status_code=400, content={"detail": str(exc)})
@@ -136,6 +143,8 @@ def create_app() -> FastAPI:
     app.include_router(narration_router)
     app.include_router(assessment_router)
     app.include_router(transcription_router)
+    app.include_router(chaptering_router)
+    app.include_router(interactive_video_router)
     return app
 
 

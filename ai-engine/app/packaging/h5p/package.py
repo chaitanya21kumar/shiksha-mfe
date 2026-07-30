@@ -30,6 +30,7 @@ from __future__ import annotations
 import io
 import json
 import zipfile
+from typing import NamedTuple
 
 MANIFEST_NAME = "h5p.json"
 CONTENT_NAME = "content/content.json"
@@ -37,6 +38,14 @@ CONTENT_NAME = "content/content.json"
 # The earliest timestamp a ZIP can represent. Any constant works; this one is the
 # conventional choice for reproducible archives.
 _FIXED_TIMESTAMP = (1980, 1, 1, 0, 0, 0)
+
+
+class H5PPackage(NamedTuple):
+    """A built ``.h5p`` and anything the caller should know about it."""
+
+    content: bytes
+    filename: str
+    warnings: list[str]
 
 
 def _dump(payload: dict[str, object]) -> bytes:

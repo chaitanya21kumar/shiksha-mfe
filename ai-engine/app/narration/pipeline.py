@@ -24,7 +24,7 @@ import httpx
 from pydantic import BaseModel, Field, ValidationError, field_validator
 
 from ..ingestion.schema import Block, BlockKind, Page, ParsedDocument
-from ..summarization.llm_client import LLMBadResponse, chat_json
+from ..summarization.llm_client import LLMBadResponse, chat_json_for
 from ..summarization.pipeline import EmptyDocumentError, GenerationConfig
 from . import prompts
 from .schema import NarrationScript, NarrationSegment, NarrationSource
@@ -201,15 +201,9 @@ async def _generate(
     result with a warning, so the endpoint still returns a well-formed response.
     """
     try:
-        raw = await chat_json(
-            client,
-            base_url=config.base_url,
-            api_key=config.api_key,
-            model=config.model,
-            system=prompts.SYSTEM,
-            user=prompts.narration_prompt(numbered),
-            temperature=config.temperature,
-        )
+        raw = await chat_json_for(
+                client, config, system=prompts.SYSTEM, user=prompts.narration_prompt(numbered)
+            )
         parsed = _NarrationResponse.model_validate(raw)
     except (LLMBadResponse, ValidationError) as exc:
         logger.warning("Could not generate narration: %s", exc)

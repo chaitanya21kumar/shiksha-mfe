@@ -22,37 +22,21 @@ go in the body: any question the emitter had to drop is reported in the
 
 from __future__ import annotations
 
-import json
 from typing import Annotated
 
 import httpx
-from fastapi import APIRouter, Depends, File, Query, UploadFile
-from fastapi.responses import Response
+from fastapi import APIRouter, Depends, File, Query, Response, UploadFile
 
-from ..config import settings
+from ..packaging.response import ZIP_MEDIA_TYPE, package_response
 from ..ingestion.schema import ParsedDocument
 from ..ingestion.service import parse_upload
-from ..summarization.pipeline import GenerationConfig
+from ..summarization.pipeline import generation_config
 from ..summarization.router import get_llm_client
-from .emit import H5PPackage, ScormPackage, emit_h5p, emit_scorm
+from .emit import emit_h5p, emit_scorm
 from .pipeline import ALL_TYPES, QuestionType, generate_assessment
 from .schema import AssessmentSet
 
 router = APIRouter(tags=["assessment"])
-
-#: Warnings ride in a header because the body is a file. Cap what we put there:
-#: header size limits are a real constraint, and a caller who needs every detail
-#: can generate with ``/assess`` and read the set's own ``warnings``.
-_MAX_HEADER_WARNINGS = 10
-
-#: An .h5p is a ZIP. There is no registered media type for it, and every consumer
-#: identifies it by extension, so the honest label is the one that describes the
-#: bytes — the filename in Content-Disposition carries the rest.
-_H5P_MEDIA_TYPE = "application/zip"
-
-#: A SCORM package is a plain ZIP, and is identified by its manifest, not by a
-#: media type.
-_SCORM_MEDIA_TYPE = "application/zip"
 
 _ERROR_RESPONSES = {
     400: {"description": "The document has no text to build questions from"},
@@ -75,34 +59,9 @@ _PASS_QUERY = Query(
 )
 
 
-def _generation_config() -> GenerationConfig:
-    return GenerationConfig(
-        base_url=settings.llm_base_url,
-        api_key=settings.llm_api_key,
-        model=settings.llm_model,
-        provider=settings.llm_provider,
-        temperature=settings.llm_temperature,
-        max_source_chars=settings.max_source_chars,
-    )
-
-
 def _resolve_types(question_types: list[QuestionType] | None) -> list[QuestionType]:
     """Default to every type, and drop duplicates while keeping request order."""
     return list(dict.fromkeys(question_types or ALL_TYPES))
-
-
-def _package_response(package: H5PPackage | ScormPackage, media_type: str) -> Response:
-    """Return a built package as a download, with any warnings in the headers."""
-    headers = {
-        "Content-Disposition": f'attachment; filename="{package.filename}"',
-        "X-Package-Warning-Count": str(len(package.warnings)),
-    }
-    if package.warnings:
-        # Header values must be latin-1 encodable; the warnings are not (they
-        # contain em dashes). json.dumps escapes to ASCII by default, which both
-        # solves that and keeps the header machine-readable.
-        headers["X-Package-Warnings"] = json.dumps(package.warnings[:_MAX_HEADER_WARNINGS])
-    return Response(content=package.content, media_type=media_type, headers=headers)
 
 
 @router.post("/assess", responses=_ERROR_RESPONSES)
@@ -118,7 +77,7 @@ async def assess(
     return await generate_assessment(
         client,
         document,
-        _generation_config(),
+        generation_config(),
         question_types=_resolve_types(question_types),
         count=count,
         language=language,
@@ -143,7 +102,7 @@ async def assess_file(
     return await generate_assessment(
         client,
         document,
-        _generation_config(),
+        generation_config(),
         question_types=_resolve_types(question_types),
         count=count,
         language=language,
@@ -156,7 +115,7 @@ async def assess_file(
     response_class=Response,
     responses={
         200: {
-            "content": {_H5P_MEDIA_TYPE: {"schema": {"type": "string", "format": "binary"}}},
+            "content": {ZIP_MEDIA_TYPE: {"schema": {"type": "string", "format": "binary"}}},
             "description": "An H5P Question Set, importable into an LMS with the H5P content types installed",
         },
         400: {"description": "No question in the set could be packaged"},
@@ -168,7 +127,7 @@ async def assess_h5p(assessment: AssessmentSet) -> Response:
     Takes the output of `/assess` unchanged, so a caller can review or edit the
     questions — or supply their own `score_bands` rubric — before packaging.
     """
-    return _package_response(emit_h5p(assessment), _H5P_MEDIA_TYPE)
+    return package_response(emit_h5p(assessment))
 
 
 @router.post(
@@ -176,7 +135,7 @@ async def assess_h5p(assessment: AssessmentSet) -> Response:
     response_class=Response,
     responses={
         200: {
-            "content": {_H5P_MEDIA_TYPE: {"schema": {"type": "string", "format": "binary"}}},
+            "content": {ZIP_MEDIA_TYPE: {"schema": {"type": "string", "format": "binary"}}},
             "description": "An H5P Question Set built from the uploaded document",
         },
         **_ERROR_RESPONSES,
@@ -203,13 +162,13 @@ async def assess_h5p_file(
     assessment = await generate_assessment(
         client,
         document,
-        _generation_config(),
+        generation_config(),
         question_types=_resolve_types(question_types),
         count=count,
         language=language,
         pass_percentage=pass_percentage,
     )
-    return _package_response(emit_h5p(assessment), _H5P_MEDIA_TYPE)
+    return package_response(emit_h5p(assessment))
 
 
 @router.post(
@@ -217,7 +176,7 @@ async def assess_h5p_file(
     response_class=Response,
     responses={
         200: {
-            "content": {_SCORM_MEDIA_TYPE: {"schema": {"type": "string", "format": "binary"}}},
+            "content": {ZIP_MEDIA_TYPE: {"schema": {"type": "string", "format": "binary"}}},
             "description": "A SCORM 1.2 package, importable into Moodle 4.x and Open edX",
         },
         400: {"description": "The set has no questions to package"},
@@ -230,7 +189,7 @@ async def assess_scorm(assessment: AssessmentSet) -> Response:
     a JavaScript API to report through. That is why per-question `points` is
     honoured exactly here, where H5P has to score on its own scale.
     """
-    return _package_response(emit_scorm(assessment), _SCORM_MEDIA_TYPE)
+    return package_response(emit_scorm(assessment))
 
 
 @router.post(
@@ -238,7 +197,7 @@ async def assess_scorm(assessment: AssessmentSet) -> Response:
     response_class=Response,
     responses={
         200: {
-            "content": {_SCORM_MEDIA_TYPE: {"schema": {"type": "string", "format": "binary"}}},
+            "content": {ZIP_MEDIA_TYPE: {"schema": {"type": "string", "format": "binary"}}},
             "description": "A SCORM 1.2 package built from the uploaded document",
         },
         **_ERROR_RESPONSES,
@@ -263,10 +222,10 @@ async def assess_scorm_file(
     assessment = await generate_assessment(
         client,
         document,
-        _generation_config(),
+        generation_config(),
         question_types=_resolve_types(question_types),
         count=count,
         language=language,
         pass_percentage=pass_percentage,
     )
-    return _package_response(emit_scorm(assessment), _SCORM_MEDIA_TYPE)
+    return package_response(emit_scorm(assessment))

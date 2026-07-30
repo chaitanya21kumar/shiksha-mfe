@@ -20,7 +20,7 @@ from pydantic import BaseModel, Field, ValidationError, field_validator
 
 from ..ingestion.schema import Block, BlockKind, ParsedDocument
 from . import prompts
-from .llm_client import LLMBadResponse, chat_json
+from .llm_client import LLMBadResponse, chat_json_for
 from .schema import DocumentInsights, GlossaryTerm, InsightsSource, OutlineSection
 
 logger = logging.getLogger("ai_engine.summarization")
@@ -40,6 +40,11 @@ class GenerationConfig:
     provider: str
     temperature: float
     max_source_chars: int
+    #: An optional second gateway, used only when the first cannot serve the call.
+    #: Empty by default, which disables it entirely.
+    fallback_base_url: str = ""
+    fallback_api_key: str = ""
+    fallback_model: str = ""
 
 
 # Internal response shapes. Each generation is validated against one of these
@@ -126,15 +131,9 @@ async def _generate_section(
     can fail the whole request.
     """
     try:
-        raw = await chat_json(
-            client,
-            base_url=config.base_url,
-            api_key=config.api_key,
-            model=config.model,
-            system=prompts.SYSTEM,
-            user=user,
-            temperature=config.temperature,
-        )
+        raw = await chat_json_for(
+                client, config, system=prompts.SYSTEM, user=user
+            )
         return response_model.model_validate(raw)
     except (LLMBadResponse, ValidationError) as exc:
         # Degrade this section to a warning, but log it too: a section silently
@@ -195,4 +194,25 @@ async def generate_insights(
         glossary=glossary.glossary if glossary else [],
         outline=outline.outline if outline else [],
         warnings=warnings,
+    )
+
+
+def generation_config() -> GenerationConfig:
+    """The generation settings every router hands to the pipelines.
+
+    One definition rather than one per router: five identical copies is five places
+    a new setting has to be remembered, and four of them will be missed.
+    """
+    from ..config import settings
+
+    return GenerationConfig(
+        base_url=settings.llm_base_url,
+        api_key=settings.llm_api_key,
+        model=settings.llm_model,
+        provider=settings.llm_provider,
+        temperature=settings.llm_temperature,
+        max_source_chars=settings.max_source_chars,
+        fallback_base_url=settings.llm_fallback_base_url,
+        fallback_api_key=settings.llm_fallback_api_key,
+        fallback_model=settings.llm_fallback_model,
     )
