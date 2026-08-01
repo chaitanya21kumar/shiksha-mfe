@@ -613,9 +613,36 @@ def build_question_subcontent(
     return built
 
 
+def _visibility_fields(visibility: str) -> tuple[bool, str, bool]:
+    """Map the contract's solution visibility onto H5P Question Set 1.20.
+
+    Three real fields carry this, and no others exist: ``override.checkButton``
+    (boolean), ``override.showSolutionButton`` (select, "on"/"off") and
+    ``endGame.showSolutionButton`` (boolean). The first two are pushed down onto
+    every question by the Question Set; the third governs the results page.
+
+    ``override.showSolutionButton`` is a *select* whose default is null, meaning
+    "leave each question alone". Writing "off" is therefore not the same as
+    omitting it, and omitting it is what the emitter used to do — which is why a
+    teacher had no way to suppress the per-question solution at all.
+
+    Returns (check_button, per_question_solution, results_page_solution).
+    """
+    if visibility == "never":
+        return False, "off", False
+    if visibility == "after_submission":
+        # No instant feedback while answering; the solution appears only once the
+        # whole set has been submitted and the results page is shown.
+        return False, "off", True
+    return True, "on", True
+
+
 def _question_set(assessment: AssessmentSet, questions: list[dict[str, object]]) -> dict[str, object]:
     bands = assessment.score_bands or default_score_bands(assessment.pass_percentage)
     title = assessment.source.title or assessment.source.filename
+    check_button, per_question_solution, results_solution = _visibility_fields(
+        assessment.solution_visibility
+    )
     return {
         "introPage": {
             "showIntroPage": True,
@@ -646,7 +673,7 @@ def _question_set(assessment: AssessmentSet, questions: list[dict[str, object]])
         "randomQuestions": False,
         "endGame": {
             "showResultPage": True,
-            "showSolutionButton": True,
+            "showSolutionButton": results_solution,
             "showRetryButton": True,
             "noResultMessage": "Finished",
             "message": "Your result:",
@@ -658,7 +685,10 @@ def _question_set(assessment: AssessmentSet, questions: list[dict[str, object]])
             "showAnimations": False,
             "skippable": False,
         },
-        "override": {"checkButton": True},
+        "override": {
+            "checkButton": check_button,
+            "showSolutionButton": per_question_solution,
+        },
     }
 
 
@@ -684,6 +714,18 @@ def emit_h5p(assessment: AssessmentSet) -> H5PPackage:
 
     if not questions:
         raise EmptyAssessmentError("No questions could be packaged as an H5P Question Set.")
+
+    # H5P.QuestionSet 1.20 has no timer. Not a hidden one, not an undocumented one:
+    # its semantics.json contains no field for a time limit, a countdown or a
+    # deadline anywhere, and neither does any question library we emit. An invented
+    # field would not error — H5PContentValidator drops unknown keys silently — so
+    # the package would import cleanly and simply never count down, which is the
+    # worst of both outcomes. Say so instead.
+    if assessment.time_limit_seconds is not None:
+        warnings.append(
+            f"Time limit of {assessment.time_limit_seconds}s not applied: H5P Question Set has "
+            "no timer field. Use the SCORM package, or set the limit on the LMS activity."
+        )
 
     # Compare against what we actually packaged, not the set's max_points: any
     # dropped question already has its own warning, and counting it here would

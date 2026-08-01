@@ -19,6 +19,114 @@
   var launchedAt = Date.now();
   var responses = {};
   var finished = false;
+  var deadline = null; // absolute epoch ms, or null when untimed
+  var ticker = null;
+  var announcedAt = {}; // thresholds already spoken, so each is announced once
+
+  // --- teacher controls -----------------------------------------------------
+
+  // "always" and "after_submission" behave identically here, and that is a fact
+  // about this player rather than an omission: it has no per-question Check
+  // button, so there is no earlier moment at which a solution could appear. The
+  // two differ only in H5P, which does have one. "never" is the value that
+  // changes anything here, and it changes it in showResults.
+  function solutionsVisible() {
+    return data.solution_visibility !== "never";
+  }
+
+  // --- countdown ------------------------------------------------------------
+  //
+  // One clock for the whole assessment. H5P Question Set has no timer field of
+  // any kind, so this player is the only artefact of the two that can honour it.
+  //
+  // The deadline is stored as an absolute instant, not as "seconds remaining",
+  // because a learner who reloads the page must not be handed their time back.
+  // cmi.suspend_data is the right home for it: it is the one CMI element that is
+  // ours to define and that the LMS persists across a relaunch. Without an LMS
+  // (a package opened directly) sessionStorage keeps the same promise for the
+  // life of the tab.
+
+  var DEADLINE_KEY = "scorm-deadline:" + (data.assessment_id || "assessment");
+
+  function loadDeadline() {
+    var raw = "";
+    if (scorm.connected) raw = scorm.get("cmi.suspend_data") || "";
+    if (!raw) {
+      try {
+        raw = window.sessionStorage.getItem(DEADLINE_KEY) || "";
+      } catch (e) {
+        raw = ""; // storage can be blocked; an untimed run is better than a crash
+      }
+    }
+    var parsed = parseInt(raw, 10);
+    return isFinite(parsed) && parsed > 0 ? parsed : null;
+  }
+
+  function saveDeadline(at) {
+    if (scorm.connected) scorm.set("cmi.suspend_data", String(at));
+    try {
+      window.sessionStorage.setItem(DEADLINE_KEY, String(at));
+    } catch (e) {
+      /* blocked storage is not fatal; the LMS copy is the durable one */
+    }
+  }
+
+  function clockText(remaining) {
+    var s = Math.max(0, Math.ceil(remaining / 1000));
+    var m = Math.floor(s / 60);
+    if (m >= 60) return Math.floor(m / 60) + ":" + pad(m % 60) + ":" + pad(s % 60);
+    return m + ":" + pad(s % 60);
+  }
+
+  // Announce at a quarter left and again at a tenth, then count the last ten
+  // seconds down. Proportional rather than fixed, so a three-minute quiz and an
+  // hour-long paper both warn at a point that means something.
+  function announce(remaining, total) {
+    var marks = [
+      { at: total * 0.25, say: "A quarter of your time remains." },
+      { at: total * 0.1, say: "Ten per cent of your time remains." },
+    ];
+    marks.forEach(function (mark, i) {
+      if (announcedAt[i] || remaining > mark.at) return;
+      announcedAt[i] = true;
+      var node = document.getElementById("timer-announce");
+      if (node) node.textContent = mark.say;
+    });
+  }
+
+  function tick() {
+    var box = document.getElementById("timer");
+    if (!box || deadline === null) return;
+    var remaining = deadline - Date.now();
+    var total = data.time_limit_seconds * 1000;
+    box.textContent = "Time remaining " + clockText(remaining);
+    box.className = remaining <= total * 0.1 ? "urgent" : "";
+    announce(remaining, total);
+    if (remaining > 0) return;
+    if (ticker) window.clearInterval(ticker);
+    ticker = null;
+    box.textContent = "Time is up";
+    // Expiry submits whatever is on the page. It deliberately bypasses the
+    // minimum-length guard: the guard exists to stop a learner submitting an
+    // unfinished answer by accident, and this is not an accident. Refusing to
+    // submit here would leave the learner with no score at all, which is a worse
+    // outcome than a short answer marked on what it actually contains.
+    submit(true);
+  }
+
+  function startTimer() {
+    if (!data.time_limit_seconds) return;
+    var box = document.getElementById("timer");
+    if (!box) return;
+    box.hidden = false;
+    deadline = loadDeadline();
+    if (deadline === null) {
+      deadline = Date.now() + data.time_limit_seconds * 1000;
+      saveDeadline(deadline);
+    }
+    tick();
+    if (deadline !== null && !finished) ticker = window.setInterval(tick, 1000);
+  }
 
   // --- reporting ------------------------------------------------------------
 
@@ -330,6 +438,21 @@
     var band = bandFor(pct);
     if (band) out.appendChild(el("p", "band", band));
 
+    // The teacher can withhold the answers. Everything below this point reveals
+    // part of the key — the marked-up key points, the model answer, the
+    // explanations — so it is all gated together.
+    //
+    // Be honest about what this is: the answer key travels inside the package,
+    // because the package grades the learner on the learner's own machine. This
+    // hides it from the interface, not from someone reading the file. Genuinely
+    // withholding it needs grading to move server-side, which is Module D.
+    if (!solutionsVisible()) {
+      out.appendChild(
+        el("p", "solutions-withheld", "Answers are not shown for this assessment.")
+      );
+      return;
+    }
+
     // A short answer is marked by looking for specific phrases, so the learner is
     // shown exactly which points were found and what a complete answer looks like.
     // Marking that a learner cannot inspect is not marking they can learn from —
@@ -515,10 +638,15 @@
     return offenders.length ? offenders[0] : null;
   }
 
-  function submit() {
+  function submit(forced) {
     if (finished) return;
+    // Only an expiry may skip the minimum-length guard. `forced` is read as a
+    // strict boolean because this function is also a click handler, and a
+    // MouseEvent is truthy — passing it straight through would let every manual
+    // click bypass the guard.
+    forced = forced === true;
 
-    var short = tooShort();
+    var short = forced ? null : tooShort();
     if (short) {
       var note = document.querySelector('[data-note-for="' + short.id + '"]');
       if (note) {
@@ -531,6 +659,12 @@
     }
 
     finished = true;
+    if (ticker) {
+      window.clearInterval(ticker);
+      ticker = null;
+    }
+    var clock = document.getElementById("timer");
+    if (clock) clock.hidden = true;
 
     var earned = 0;
     data.questions.forEach(function (question) {
@@ -550,7 +684,10 @@
       scorm.set("cmi.core.score.raw", scoreString(earned, data.max_points));
       scorm.set("cmi.core.lesson_status", passed ? "passed" : "failed");
       scorm.set("cmi.core.session_time", timespan((Date.now() - launchedAt) / 1000));
-      scorm.set("cmi.core.exit", ""); // "" IS a normal exit; "normal" is invalid
+      // "" IS a normal exit; "normal" is invalid. "time-out" is the one other
+      // value that applies here, and SCORM 1.2 defines it for exactly this case,
+      // so a report can tell a learner who ran out of time from one who finished.
+      scorm.set("cmi.core.exit", forced ? "time-out" : "");
       scorm.finish();
     } else if (scorm.available()) {
       // We found an API at boot but cannot write now — the session ended under us.
@@ -566,7 +703,11 @@
   // --- boot -----------------------------------------------------------------
 
   render();
-  document.getElementById("submit").addEventListener("click", submit);
+  // Wrapped, not passed directly: the handler receives a MouseEvent, and `submit`
+  // reads its first argument as "the timer expired".
+  document.getElementById("submit").addEventListener("click", function () {
+    submit(false);
+  });
 
   if (scorm.available() && scorm.initialize()) {
     var entry = scorm.get("cmi.core.entry");
@@ -583,6 +724,10 @@
     banner.hidden = false;
     banner.textContent = "Not connected to an LMS — your results will not be saved.";
   }
+
+  // After the LMS handshake, so a resumed attempt reads its existing deadline out
+  // of suspend_data rather than starting a fresh one.
+  startTimer();
 
   window.addEventListener("pagehide", function (event) {
     if (finished || !scorm.connected) return;

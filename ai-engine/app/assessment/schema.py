@@ -36,6 +36,25 @@ from pydantic import BaseModel, Field, computed_field, model_validator
 # markup characters (``* / :``), so a blanked sentence round-trips cleanly.
 _BLANK_MARKER = re.compile(r"\[\[(\d+)\]\]")
 
+#: When a learner may see the correct answers.
+#:
+#: Only three values exist, and the omission is deliberate. A teacher asking to
+#: "release the answers later" wants a fourth — a package that hides its answers
+#: until someone flips a switch — and a static package cannot do that. Both an
+#: ``.h5p`` and a SCORM ZIP carry their own answer key, because both grade the
+#: learner on the learner's own machine; hiding the key is a property of the user
+#: interface, not of the file. Withholding answers from a determined learner needs
+#: grading to move server-side, which is Module D. Offering a ``teacher_release``
+#: value here would be promising something the artefact cannot keep.
+SolutionVisibility = Literal["always", "after_submission", "never"]
+
+#: Bounds on a whole-assessment time limit. The floor is not arbitrary: below it a
+#: learner cannot finish reading, so a shorter value is far more likely to be a
+#: unit mistake (minutes typed as seconds) than an intention. The ceiling is a
+#: day, past which a countdown has stopped meaning anything.
+MIN_TIME_LIMIT_SECONDS = 30
+MAX_TIME_LIMIT_SECONDS = 86_400
+
 
 class Choice(BaseModel):
     """One option of a multiple-choice question."""
@@ -400,6 +419,24 @@ class AssessmentSet(BaseModel):
         description=(
             "The rubric: score bands over the achieved percentage. Must tile 0-100 with no "
             "gaps or overlaps. Empty means the emitters derive a default from pass_percentage."
+        ),
+    )
+    solution_visibility: SolutionVisibility = Field(
+        default="always",
+        description=(
+            "When the learner may see the correct answers. Enforced in the user interface of "
+            "both emitted formats; the answer key is still inside the package, because both "
+            "grade on the learner's machine."
+        ),
+    )
+    time_limit_seconds: int | None = Field(
+        default=None,
+        ge=MIN_TIME_LIMIT_SECONDS,
+        le=MAX_TIME_LIMIT_SECONDS,
+        description=(
+            "Optional countdown for the whole assessment, not per question. Honoured by the "
+            "SCORM player; H5P Question Set has no timer field, so that emitter reports the "
+            "limit as unsupported rather than silently dropping it."
         ),
     )
     questions: list[Question] = Field(default_factory=list)
