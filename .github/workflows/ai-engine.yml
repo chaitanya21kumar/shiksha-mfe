@@ -32,6 +32,10 @@ permissions:
 jobs:
   test:
     runs-on: ubuntu-latest
+    # The suite finishes in well under a minute. Without a ceiling a wedged job
+    # holds a runner for six hours by default, and the failure looks like a
+    # queue rather than a bug.
+    timeout-minutes: 10
     defaults:
       run:
         working-directory: ai-engine
