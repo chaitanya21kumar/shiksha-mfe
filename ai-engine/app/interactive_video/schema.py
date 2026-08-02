@@ -16,7 +16,7 @@ from __future__ import annotations
 import re
 from datetime import datetime
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from ..assessment.schema import Question
 from ..chaptering.schema import MAX_CHAPTERS, Chapter
@@ -34,19 +34,48 @@ class VideoSource(BaseModel):
 
     url: str = Field(description="An http(s) URL the LMS can stream the media from.")
     mime: str = Field(default="video/mp4", description="The container's MIME type.")
+    subtitles_url: str | None = Field(
+        default=None,
+        description=(
+            "Optional http(s) URL of a WebVTT track. Referenced, not embedded, for the "
+            "same reason the media is: H5P resolves an absolute URL as-is."
+        ),
+    )
+    subtitles_language: str = Field(
+        default="en", description="BCP-47 tag for the subtitle track, shown in the caption menu."
+    )
 
     @model_validator(mode="after")
     def _url_is_streamable(self) -> VideoSource:
         # A relative path or a file:// URL would package cleanly and then show the
         # learner an empty player, because the LMS serves the package from its own
         # domain and has no access to the author's disk.
-        if not _HTTP_URL.match(self.url.strip()):
+        #
+        # The stripped value is what gets stored, not just what gets validated. H5P
+        # decides whether a path is absolute with `/^[a-z0-9]+:\/\//i`, and a single
+        # leading space fails that test — so the player treats the URL as relative to
+        # the package, finds nothing, and shows an empty frame with no error anywhere.
+        # Validating the stripped form while storing the padded one would let exactly
+        # that through.
+        cleaned = self.url.strip()
+        if not _HTTP_URL.match(cleaned):
             raise ValueError("video url must be an http(s) URL the LMS can reach")
+        object.__setattr__(self, "url", cleaned)
+
+        # The same trap, and the same fix: a padded subtitle URL resolves relative to
+        # the package and the caption simply never appears.
+        if self.subtitles_url is not None:
+            track = self.subtitles_url.strip()
+            if not _HTTP_URL.match(track):
+                raise ValueError("subtitles url must be an http(s) URL the LMS can reach")
+            object.__setattr__(self, "subtitles_url", track)
         return self
 
 
 class ChapterCheck(BaseModel):
     """The questions asked at the end of one chapter."""
+
+    model_config = ConfigDict(extra="forbid")
 
     chapter_index: int = Field(ge=1, description="The Chapter.index these questions belong to.")
     questions: list[Question] = Field(
@@ -56,6 +85,8 @@ class ChapterCheck(BaseModel):
 
 class InteractiveVideoSpec(BaseModel):
     """Everything Module C.3 needs to emit one interactive video package."""
+
+    model_config = ConfigDict(extra="forbid")
 
     schema_version: str = "1.0"
     content_id: str = Field(
