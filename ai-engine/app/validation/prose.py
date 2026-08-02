@@ -218,7 +218,11 @@ class ProseChecker:
                     message=(
                         f"{word!r} is not in the {self.language} dictionary and does not appear "
                         "in the source document."
-                        + (f" Did you mean {correction!r}?" if correction and correction != lowered else "")
+                        + (
+                            f" Did you mean {correction!r}?"
+                            if correction and correction != lowered
+                            else ""
+                        )
                     ),
                     actual=word,
                     suggestion=correction if correction and correction != lowered else None,

@@ -32,6 +32,8 @@ _HTTP_URL = re.compile(r"^https?://", re.IGNORECASE)
 class VideoSource(BaseModel):
     """Where the media is hosted, and what it is."""
 
+    model_config = ConfigDict(extra="forbid")
+
     url: str = Field(description="An http(s) URL the LMS can stream the media from.")
     mime: str = Field(default="video/mp4", description="The container's MIME type.")
     subtitles_url: str | None = Field(

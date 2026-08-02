@@ -37,7 +37,7 @@ def _mcq(qid="q1") -> MCQItem:
 def _spec(video: VideoSource) -> InteractiveVideoSpec:
     return InteractiveVideoSpec(
         content_id="iv-1",
-        source=TranscriptSource(filename="lesson.mp4", duration_seconds=300.0),
+        source=TranscriptSource(filename="lesson.mp4", media_seconds=300.0),
         title="Water cycle",
         generated_at=datetime(2026, 8, 1, tzinfo=timezone.utc),
         chapters=[

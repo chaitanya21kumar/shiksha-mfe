@@ -91,7 +91,10 @@ def test_assessment_prose_is_checked():
     question = MCQItem(
         id="q1",
         prompt="Which proccess returns water to the air?",
-        choices=[Choice(id="q1-c1", text="Evaporation", is_correct=True), Choice(id="q1-c2", text="Freezing")],
+        choices=[
+            Choice(id="q1-c1", text="Evaporation", is_correct=True),
+            Choice(id="q1-c2", text="Freezing"),
+        ],
     )
     report = check_assessment(make_set(questions=[question]), SOURCE)
     assert any(i.actual == "proccess" for i in report.issues)

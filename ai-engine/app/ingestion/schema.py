@@ -13,7 +13,7 @@ from datetime import datetime
 from enum import Enum
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class BlockKind(str, Enum):
@@ -33,6 +33,8 @@ class ImageRef(BaseModel):
     reference plus whatever metadata the source exposes.
     """
 
+    model_config = ConfigDict(extra="forbid")
+
     id: str
     caption: str | None = None
     width: int | None = None
@@ -48,6 +50,8 @@ class Block(BaseModel):
     Only the fields relevant to `kind` are populated (e.g. `items` for a list,
     `image` for an image); the rest stay `None`.
     """
+
+    model_config = ConfigDict(extra="forbid")
 
     kind: BlockKind
     text: str | None = None
@@ -69,6 +73,8 @@ class Page(BaseModel):
     HTML) that have no native pagination.
     """
 
+    model_config = ConfigDict(extra="forbid")
+
     index: int = Field(description="1-based position in the document.")
     kind: Literal["page", "slide", "sheet", "document"]
     blocks: list[Block] = Field(default_factory=list)
@@ -77,6 +83,8 @@ class Page(BaseModel):
 
 class SourceInfo(BaseModel):
     """Metadata about the original file."""
+
+    model_config = ConfigDict(extra="forbid")
 
     filename: str
     format: Literal["pdf", "pptx", "docx", "csv", "txt", "md", "html"]
@@ -91,6 +99,8 @@ class SourceInfo(BaseModel):
 
 class ParsedDocument(BaseModel):
     """The full structured output of parsing one document."""
+
+    model_config = ConfigDict(extra="forbid")
 
     schema_version: str = "1.0"
     source: SourceInfo

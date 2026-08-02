@@ -19,7 +19,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from ..transcription.schema import TranscriptSource
 
@@ -34,6 +34,8 @@ MAX_TITLE_CHARS = 120
 
 class Chapter(BaseModel):
     """One titled span of the recording."""
+
+    model_config = ConfigDict(extra="forbid")
 
     index: int = Field(ge=1, description="1-based position of this chapter.")
     start: float = Field(ge=0, description="Start time in seconds from the media start.")
@@ -65,6 +67,8 @@ class Chapter(BaseModel):
 
 class ChapteredTranscript(BaseModel):
     """Everything Module C.2 derives from one transcript."""
+
+    model_config = ConfigDict(extra="forbid")
 
     schema_version: str = "1.0"
     source: TranscriptSource

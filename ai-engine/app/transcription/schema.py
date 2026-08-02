@@ -17,11 +17,13 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 class TranscriptSegment(BaseModel):
     """One timed cue: when it is spoken, and what is said."""
+
+    model_config = ConfigDict(extra="forbid")
 
     index: int = Field(description="1-based position of this cue in the transcript.")
     start: float = Field(ge=0, description="Start time in seconds from the media start.")
@@ -44,6 +46,8 @@ class TranscriptSegment(BaseModel):
 class TranscriptSource(BaseModel):
     """A pointer back to the media this transcript was derived from."""
 
+    model_config = ConfigDict(extra="forbid")
+
     filename: str
     media_seconds: float | None = Field(
         default=None, description="Media duration in seconds, if the provider reported it."
@@ -52,6 +56,8 @@ class TranscriptSource(BaseModel):
 
 class Transcript(BaseModel):
     """Everything Module C.1 derives from one audio or video file."""
+
+    model_config = ConfigDict(extra="forbid")
 
     schema_version: str = "1.0"
     source: TranscriptSource

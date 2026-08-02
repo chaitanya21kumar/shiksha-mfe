@@ -29,7 +29,7 @@ import re
 from datetime import datetime
 from typing import Annotated, Literal, Union
 
-from pydantic import BaseModel, Field, computed_field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, computed_field, model_validator
 
 # Fill-in-the-blank sentences mark each blank positionally as [[1]], [[2]], … .
 # This token cannot collide with LaTeX (``\( \)``, ``$$``) or with the H5P blank
@@ -59,6 +59,8 @@ MAX_TIME_LIMIT_SECONDS = 86_400
 class Choice(BaseModel):
     """One option of a multiple-choice question."""
 
+    model_config = ConfigDict(extra="forbid")
+
     id: str = Field(description="Stable id, assigned by the pipeline (e.g. 'q1-c1').")
     text: str
     is_correct: bool = False
@@ -70,12 +72,16 @@ class Choice(BaseModel):
 class MatchTarget(BaseModel):
     """A draggable/right-hand item in a match-the-pair question."""
 
+    model_config = ConfigDict(extra="forbid")
+
     id: str = Field(description="Stable id, assigned by the pipeline (e.g. 'q1-t1').")
     text: str
 
 
 class MatchSource(BaseModel):
     """A left-hand prompt in a match-the-pair question, plus its correct target."""
+
+    model_config = ConfigDict(extra="forbid")
 
     id: str = Field(description="Stable id, assigned by the pipeline (e.g. 'q1-s1').")
     text: str
@@ -84,6 +90,8 @@ class MatchSource(BaseModel):
 
 class Blank(BaseModel):
     """One blank in a fill-in-the-blank question."""
+
+    model_config = ConfigDict(extra="forbid")
 
     id: str = Field(description="Stable id, assigned by the pipeline (e.g. 'q1-b1').")
     answers: list[str] = Field(
@@ -95,6 +103,8 @@ class Blank(BaseModel):
 
 class _QuestionBase(BaseModel):
     """Fields shared by every question type."""
+
+    model_config = ConfigDict(extra="forbid")
 
     id: str = Field(description="Stable, unique id within the set (e.g. 'q1').")
     source_index: int | None = Field(
@@ -113,6 +123,8 @@ class _QuestionBase(BaseModel):
 
 class MCQItem(_QuestionBase):
     """A multiple-choice question."""
+
+    model_config = ConfigDict(extra="forbid")
 
     type: Literal["mcq"] = "mcq"
     prompt: str = Field(description="The question stem.")
@@ -140,6 +152,8 @@ class MCQItem(_QuestionBase):
 
 class MatchItem(_QuestionBase):
     """A match-the-pair question: each source maps to exactly one target."""
+
+    model_config = ConfigDict(extra="forbid")
 
     type: Literal["match"] = "match"
     prompt: str = Field(description="The matching instruction/stem.")
@@ -176,6 +190,8 @@ class FillBlankItem(_QuestionBase):
     ``text`` is the sentence with each blank marked positionally as ``[[1]]``,
     ``[[2]]``, … in reading order; ``blanks[i]`` fills marker ``[[i + 1]]``.
     """
+
+    model_config = ConfigDict(extra="forbid")
 
     type: Literal["fill_blank"] = "fill_blank"
     prompt: str | None = Field(default=None, description="Optional task instruction.")
@@ -235,6 +251,8 @@ class KeyPoint(BaseModel):
     contain. That is the same rule the fill-in-the-blank answers already follow,
     and for the same reason: a mark scheme *is* an answer key.
     """
+
+    model_config = ConfigDict(extra="forbid")
 
     id: str = Field(description="Stable id, assigned by the pipeline (e.g. 'q1-k1').")
     text: str = Field(description="The idea the learner must express; shown as the mark scheme.")
@@ -296,6 +314,8 @@ class ShortAnswerItem(_QuestionBase):
     never a black box.
     """
 
+    model_config = ConfigDict(extra="forbid")
+
     type: Literal["short_answer"] = "short_answer"
     prompt: str = Field(description="The question stem.")
     key_points: list[KeyPoint] = Field(
@@ -351,6 +371,8 @@ Question = Annotated[
 class AssessmentSource(BaseModel):
     """A pointer back to the document this assessment was derived from."""
 
+    model_config = ConfigDict(extra="forbid")
+
     filename: str
     title: str | None = None
     page_count: int = Field(description="Pages, slides or sheets in the source.")
@@ -362,6 +384,8 @@ class ScoreBand(BaseModel):
     ``from``/``to`` are Python keywords, hence the ``_percent`` suffixes; the H5P
     emitter renames them when it writes ``endGame.overallFeedback``.
     """
+
+    model_config = ConfigDict(extra="forbid")
 
     from_percent: int = Field(ge=0, le=100, description="Lower bound, inclusive.")
     to_percent: int = Field(ge=0, le=100, description="Upper bound, inclusive.")
@@ -395,6 +419,16 @@ def default_score_bands(pass_percentage: int) -> list[ScoreBand]:
 
 class AssessmentSet(BaseModel):
     """Everything Module B derives from one parsed document."""
+
+    # Deliberately NOT extra="forbid", unlike every other contract here.
+    #
+    # This model carries two computed fields, `max_points` and `counts`. Pydantic
+    # writes them into `model_dump()` and refuses them on the way back in, so
+    # forbidding extras would break the one workflow the packaging endpoints exist
+    # for: take the JSON `/assess` returned, edit a question, POST it to
+    # `/assess/h5p`. That review seam matters more than catching a mistyped key at
+    # this one level — and every model *inside* this one is strict, so a typo in a
+    # question, choice or blank is still refused.
 
     schema_version: str = "1.0"
     assessment_id: str = Field(
