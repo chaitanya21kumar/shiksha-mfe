@@ -193,7 +193,24 @@ where the guarantee is untested.
 
 `tests/test_grader_parity.py` is the exception: it runs our short-answer matcher
 against a verbatim transcription of H5P's own, under `node`, and skips rather than
-fails where node is absent. CI has node, so it runs there.
+fails where node is absent.
+
+[`.github/workflows/ai-engine.yml`](../.github/workflows/ai-engine.yml) runs the
+same command on every pull request that touches `ai-engine/`, against Python 3.11
+and 3.12 — the floor `pyproject.toml` declares and the version this is developed
+on, so the declared floor cannot quietly rot.
+
+Dependencies there come from [`requirements-ci.txt`](requirements-ci.txt), which
+pins exact versions with hashes and is installed with `--require-hashes
+--only-binary :all:`. The engine itself is not installed in CI: `pythonpath` above
+means `app` imports from the source tree, so an editable install would neither
+make the tests run nor exercise the wheel's package data. Locking matters for a reason that is not only about
+security: without it CI installs whatever is newest that day, so the code under
+test changes while the code in the repository does not, and a build goes red for a
+change nobody made. Refusing source distributions matters because installing from
+source runs the package's own setup script on the runner. Regenerate the file the
+way its header describes — inside a Linux container, so the resolution matches the
+runner rather than whatever a developer's laptop happens to resolve.
 
 ## Configuration
 
