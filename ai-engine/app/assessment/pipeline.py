@@ -35,6 +35,7 @@ import httpx
 from pydantic import AliasChoices, BaseModel, Field, ValidationError, field_validator
 
 from ..ingestion.schema import Block, BlockKind, Page, ParsedDocument
+from ..validation import check_assessment
 from ..summarization.llm_client import LLMBadResponse, chat_json_for
 from ..summarization.pipeline import EmptyDocumentError, GenerationConfig
 from . import prompts
@@ -634,7 +635,7 @@ async def generate_assessment(
                 kept_of_type += 1
                 counter += 1
 
-    return AssessmentSet(
+    assessment = AssessmentSet(
         assessment_id=str(uuid.uuid4()),
         source=AssessmentSource(
             filename=doc.source.filename,
@@ -649,3 +650,15 @@ async def generate_assessment(
         questions=questions,
         warnings=warnings,
     )
+
+    # Only what a learner reads is checked, and the source is the allow-list. The
+    # evidence quote that grounded each question is never stored on the question —
+    # it is verified here and discarded — so there is nothing spelling could reach
+    # that the grounding gate depends on.
+    # The raw section text, not `norm_all`: normalising strips the punctuation and
+    # case that make a proper noun recognisable, and the allow-list wants the words
+    # as the author actually wrote them.
+    assessment.warnings.extend(
+        check_assessment(assessment, "\n".join(sec.text for sec in sections)).as_warnings()
+    )
+    return assessment

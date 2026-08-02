@@ -19,6 +19,7 @@ import httpx
 from pydantic import BaseModel, Field, ValidationError, field_validator
 
 from ..ingestion.schema import Block, BlockKind, ParsedDocument
+from ..validation import check_insights
 from . import prompts
 from .llm_client import LLMBadResponse, chat_json_for
 from .schema import DocumentInsights, GlossaryTerm, InsightsSource, OutlineSection
@@ -180,7 +181,7 @@ async def generate_insights(
         response_model=_OutlineResponse, label="outline", warnings=warnings,
     )
 
-    return DocumentInsights(
+    insights = DocumentInsights(
         source=InsightsSource(
             filename=doc.source.filename,
             title=doc.source.title,
@@ -195,6 +196,13 @@ async def generate_insights(
         outline=outline.outline if outline else [],
         warnings=warnings,
     )
+
+    # Spelling last, over the assembled artefact rather than each section, so the
+    # source vocabulary gathered from the whole document excuses a term that only
+    # the glossary happened to use. The source text is passed in as the allow-list:
+    # a word the author wrote is correct for this document by definition.
+    insights.warnings.extend(check_insights(insights, source_text).as_warnings())
+    return insights
 
 
 def generation_config() -> GenerationConfig:
