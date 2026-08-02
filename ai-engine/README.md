@@ -104,6 +104,22 @@ published content does and what keeps a lecture recording under an LMS upload
 limit. `POST /interactive-video/file` runs the whole chain from one upload. See
 [`docs/adr/0009`](docs/adr/0009-interactive-video-packaging.md).
 
+**Module D.1** opens the Micro-Learning Studio. `POST /micro-lesson` turns a source
+into a `MicroLesson`: a short, ordered sequence of steps, each with a heading, a few
+on-screen points and the notes a teacher would say over them. Three sources are
+accepted, which is what issue #7 asks for — a parsed document, a chaptered
+recording, or pasted text — and each has its own endpoint rather than one route
+with a mode flag.
+
+The number of steps is computed, never generated: a document splits at its
+headings, a transcript at its chapters, pasted text at its blank lines, so the same
+input always produces the same lesson shape. The model writes only the words inside
+each step, and the author's own heading always wins over the model's. Every step
+carries the page or chapter it came from, so a reviewer can ask where a line came
+from and get an answer. A section the model returns nothing for falls back to its
+own source text and says so; a step the model invents for a section that does not
+exist is discarded. See [`docs/adr/0011`](docs/adr/0011-micro-lesson-structure.md).
+
 ## Requirements
 
 - Python 3.11+ (developed on 3.12)
@@ -143,6 +159,10 @@ Then:
 - `POST /chapter/file` — transcribe a recording and chapter it in one call
 - `POST /interactive-video` — package a chaptered transcript as an H5P Interactive Video (`.h5p`)
 - `POST /interactive-video/file` — transcribe, chapter, generate checks and package in one call
+- `POST /micro-lesson` — build a micro-lesson from a parsed document
+- `POST /micro-lesson/file` — parse an upload and build a micro-lesson in one call
+- `POST /micro-lesson/transcript` — build a micro-lesson from a chaptered recording
+- `POST /micro-lesson/text` — build a micro-lesson from pasted text
 - `GET /` — service banner
 - `GET /docs` — interactive API docs
 

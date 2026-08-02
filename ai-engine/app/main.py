@@ -22,6 +22,7 @@ from .chaptering.router import router as chaptering_router
 from .config import settings
 from .ingestion.router import router as ingestion_router
 from .interactive_video.router import router as interactive_video_router
+from .microlesson.router import router as microlesson_router
 from .narration.router import router as narration_router
 from .summarization.llm_client import LLMTimeout, LLMUnavailable
 from .summarization.pipeline import EmptyDocumentError
@@ -145,6 +146,7 @@ def create_app() -> FastAPI:
     app.include_router(transcription_router)
     app.include_router(chaptering_router)
     app.include_router(interactive_video_router)
+    app.include_router(microlesson_router)
     return app
 
 
