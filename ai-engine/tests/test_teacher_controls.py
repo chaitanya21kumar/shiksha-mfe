@@ -233,3 +233,117 @@ def test_the_clock_is_not_a_live_region():
     assert 'aria-live="polite"' in markup
     timer_tag = re.search(r'<div id="timer"[^>]*>', markup).group(0)
     assert "aria-live" not in timer_tag
+
+
+# --- the routes: where a teacher actually reaches these -------------------------
+#
+# Everything above opens the artefact and checks the setting landed. All of it
+# passed while the two controls were unreachable over HTTP: they were fields on the
+# contract, so the two-step flow could set them, but none of the four generating
+# routes accepted them. A teacher who uploads a file and gets a package straight
+# back had no moment in between to say anything, and the route never asked — so the
+# answers were always shown and the clock never ran, silently, in the flow most
+# people would use. Tested at the emitter, missed at the door.
+
+
+from tests.test_assess import _sample_pdf_bytes, _typed_handler
+
+
+@pytest.fixture
+def assess_client():
+    """A TestClient whose gateway returns one valid, grounded question per type.
+
+    Reuses test_assess's handler rather than a second copy: an assessment mock has
+    to satisfy the grounding gate and every per-type shape, and getting either
+    subtly wrong yields an empty set and a 400 that looks like the thing under test
+    failing when it is really the fixture.
+    """
+    import asyncio
+
+    import httpx
+    from fastapi.testclient import TestClient
+
+    from app.main import app
+    from app.summarization.router import get_llm_client
+
+    fake = httpx.AsyncClient(
+        transport=httpx.MockTransport(_typed_handler), timeout=httpx.Timeout(5.0)
+    )
+    app.dependency_overrides[get_llm_client] = lambda: fake
+    yield TestClient(app)
+    app.dependency_overrides.pop(get_llm_client, None)
+    asyncio.run(fake.aclose())
+
+
+GENERATING_ROUTES = ["/assess/file", "/assess/h5p/file", "/assess/scorm/file"]
+
+
+@pytest.mark.parametrize("route", GENERATING_ROUTES)
+def test_every_generating_route_accepts_both_controls(assess_client, route):
+    """The one-call routes too, not only the two-step flow."""
+    resp = assess_client.post(
+        route,
+        params={"solution_visibility": "never", "time_limit_seconds": 600},
+        files={"file": ("lesson.pdf", _sample_pdf_bytes(), "application/pdf")},
+    )
+    assert resp.status_code == 200, resp.text
+
+
+def test_the_setting_reaches_the_generated_assessment(assess_client):
+    resp = assess_client.post(
+        "/assess/file",
+        params={"solution_visibility": "after_submission", "time_limit_seconds": 900},
+        files={"file": ("lesson.pdf", _sample_pdf_bytes(), "application/pdf")},
+    )
+    body = resp.json()
+    assert body["solution_visibility"] == "after_submission"
+    assert body["time_limit_seconds"] == 900
+
+
+def test_the_setting_reaches_a_package_built_in_one_call(assess_client):
+    """The assertion that would have caught it: open the package the quick route
+    returns and look, rather than trusting that the route passed anything on."""
+    resp = assess_client.post(
+        "/assess/h5p/file",
+        params={"solution_visibility": "never"},
+        files={"file": ("lesson.pdf", _sample_pdf_bytes(), "application/pdf")},
+    )
+    archive = zipfile.ZipFile(io.BytesIO(resp.content))
+    content = json.loads(archive.read("content/content.json"))
+    assert content["override"]["showSolutionButton"] == "off"
+    assert content["endGame"]["showSolutionButton"] is False
+
+
+def test_the_clock_reaches_a_scorm_package_built_in_one_call(assess_client):
+    resp = assess_client.post(
+        "/assess/scorm/file",
+        params={"time_limit_seconds": 1200},
+        files={"file": ("lesson.pdf", _sample_pdf_bytes(), "application/pdf")},
+    )
+    archive = zipfile.ZipFile(io.BytesIO(resp.content))
+    index = archive.read("index.html").decode()
+    island = re.search(
+        r'<script type="application/json" id="assessment-data">(.*?)</script>', index, re.S
+    )
+    assert json.loads(island.group(1))["time_limit_seconds"] == 1200
+
+
+def test_the_routes_still_default_to_the_old_behaviour(assess_client):
+    """Asking for nothing must behave exactly as it did before these existed."""
+    resp = assess_client.post(
+        "/assess/file", files={"file": ("lesson.pdf", _sample_pdf_bytes(), "application/pdf")}
+    )
+    body = resp.json()
+    assert body["solution_visibility"] == "always"
+    assert body["time_limit_seconds"] is None
+
+
+@pytest.mark.parametrize(("param", "value"), [("time_limit_seconds", 5), ("solution_visibility", "sometimes")])
+def test_a_route_refuses_a_setting_the_contract_would_refuse(assess_client, param, value):
+    """The bounds live on the contract; the route must not be a way around them."""
+    resp = assess_client.post(
+        "/assess/file",
+        params={param: value},
+        files={"file": ("lesson.pdf", _sample_pdf_bytes(), "application/pdf")},
+    )
+    assert resp.status_code == 422

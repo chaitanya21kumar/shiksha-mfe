@@ -53,6 +53,7 @@ from .schema import (
     MCQItem,
     Question,
     ShortAnswerItem,
+    SolutionVisibility,
 )
 
 logger = logging.getLogger("ai_engine.assessment")
@@ -597,6 +598,8 @@ async def generate_assessment(
     count: int,
     language: str,
     pass_percentage: int = 50,
+    solution_visibility: SolutionVisibility = "always",
+    time_limit_seconds: int | None = None,
 ) -> AssessmentSet:
     """Derive a source-grounded assessment from a parsed document."""
     sections = _build_sections(doc)
@@ -647,6 +650,8 @@ async def generate_assessment(
         model=config.model,
         generated_at=datetime.now(timezone.utc),
         pass_percentage=pass_percentage,
+        solution_visibility=solution_visibility,
+        time_limit_seconds=time_limit_seconds,
         questions=questions,
         warnings=warnings,
     )

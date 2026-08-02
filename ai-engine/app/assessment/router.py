@@ -34,7 +34,12 @@ from ..summarization.pipeline import generation_config
 from ..summarization.router import get_llm_client
 from .emit import emit_h5p, emit_scorm
 from .pipeline import ALL_TYPES, QuestionType, generate_assessment
-from .schema import AssessmentSet
+from .schema import (
+    MAX_TIME_LIMIT_SECONDS,
+    MIN_TIME_LIMIT_SECONDS,
+    AssessmentSet,
+    SolutionVisibility,
+)
 
 router = APIRouter(tags=["assessment"])
 
@@ -57,6 +62,18 @@ _PASS_QUERY = Query(
     le=100,
     description="Mastery threshold as a percentage (H5P passPercentage, SCORM masteryscore).",
 )
+#: The two teacher controls. They belong on every route that packages, not only on
+#: the two-step flow: a teacher who uploads a file and gets a package straight back
+#: has no moment in between to set them, so leaving them off the one-call routes
+#: means her choice is silently ignored — the package builds and imports either way.
+_SOLUTION_QUERY = Query(
+    description="When a learner may see the correct answers: always, after_submission, or never."
+)
+_TIME_LIMIT_QUERY = Query(
+    ge=MIN_TIME_LIMIT_SECONDS,
+    le=MAX_TIME_LIMIT_SECONDS,
+    description="Countdown for the whole attempt, in seconds. Omit for no limit.",
+)
 
 
 def _resolve_types(question_types: list[QuestionType] | None) -> list[QuestionType]:
@@ -72,6 +89,8 @@ async def assess(
     count: Annotated[int, _COUNT_QUERY] = 5,
     language: Annotated[str, _LANGUAGE_QUERY] = "en",
     pass_percentage: Annotated[int, _PASS_QUERY] = 50,
+    solution_visibility: Annotated[SolutionVisibility, _SOLUTION_QUERY] = "always",
+    time_limit_seconds: Annotated[int | None, _TIME_LIMIT_QUERY] = None,
 ) -> AssessmentSet:
     """Generate a source-grounded assessment from an already-parsed document."""
     return await generate_assessment(
@@ -82,6 +101,8 @@ async def assess(
         count=count,
         language=language,
         pass_percentage=pass_percentage,
+        solution_visibility=solution_visibility,
+        time_limit_seconds=time_limit_seconds,
     )
 
 
@@ -96,6 +117,8 @@ async def assess_file(
     count: Annotated[int, _COUNT_QUERY] = 5,
     language: Annotated[str, _LANGUAGE_QUERY] = "en",
     pass_percentage: Annotated[int, _PASS_QUERY] = 50,
+    solution_visibility: Annotated[SolutionVisibility, _SOLUTION_QUERY] = "always",
+    time_limit_seconds: Annotated[int | None, _TIME_LIMIT_QUERY] = None,
 ) -> AssessmentSet:
     """Parse an uploaded document and generate an assessment in one call."""
     document = await parse_upload(file)
@@ -107,6 +130,8 @@ async def assess_file(
         count=count,
         language=language,
         pass_percentage=pass_percentage,
+        solution_visibility=solution_visibility,
+        time_limit_seconds=time_limit_seconds,
     )
 
 
@@ -156,6 +181,8 @@ async def assess_h5p_file(
     count: Annotated[int, _COUNT_QUERY] = 5,
     language: Annotated[str, _LANGUAGE_QUERY] = "en",
     pass_percentage: Annotated[int, _PASS_QUERY] = 50,
+    solution_visibility: Annotated[SolutionVisibility, _SOLUTION_QUERY] = "always",
+    time_limit_seconds: Annotated[int | None, _TIME_LIMIT_QUERY] = None,
 ) -> Response:
     """Parse a document, generate an assessment, and package it — in one call."""
     document = await parse_upload(file)
@@ -167,6 +194,8 @@ async def assess_h5p_file(
         count=count,
         language=language,
         pass_percentage=pass_percentage,
+        solution_visibility=solution_visibility,
+        time_limit_seconds=time_limit_seconds,
     )
     return package_response(emit_h5p(assessment))
 
@@ -216,6 +245,8 @@ async def assess_scorm_file(
     count: Annotated[int, _COUNT_QUERY] = 5,
     language: Annotated[str, _LANGUAGE_QUERY] = "en",
     pass_percentage: Annotated[int, _PASS_QUERY] = 50,
+    solution_visibility: Annotated[SolutionVisibility, _SOLUTION_QUERY] = "always",
+    time_limit_seconds: Annotated[int | None, _TIME_LIMIT_QUERY] = None,
 ) -> Response:
     """Parse a document, generate an assessment, and package it as SCORM 1.2."""
     document = await parse_upload(file)
@@ -227,5 +258,7 @@ async def assess_scorm_file(
         count=count,
         language=language,
         pass_percentage=pass_percentage,
+        solution_visibility=solution_visibility,
+        time_limit_seconds=time_limit_seconds,
     )
     return package_response(emit_scorm(assessment))
