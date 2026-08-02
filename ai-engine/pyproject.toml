@@ -19,6 +19,7 @@ dependencies = [
 [project.optional-dependencies]
 dev = [
     "pytest>=8",
+    "pytest-cov>=5",
 ]
 
 [build-system]
@@ -43,3 +44,28 @@ include = ["app*"]
 [tool.pytest.ini_options]
 pythonpath = ["."]
 testpaths = ["tests"]
+
+# Branch coverage, not line coverage. Most of what this engine promises is about
+# the path *not* taken — a question dropped for not being grounded, a warning
+# raised where a format cannot express something, a fallback when the model
+# returns nothing. Line coverage marks those `if`s as covered the moment the happy
+# path runs through them, which is exactly the case where the guarantee is
+# untested.
+[tool.coverage.run]
+source = ["app"]
+branch = true
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = true
+# Currently 93%. The floor sits below that on purpose: a threshold pinned to the
+# exact current number turns every unrelated change into a coverage failure, and
+# people respond to that by lowering it rather than by writing tests. Low enough
+# not to nag, high enough that a new module arriving untested trips it.
+fail_under = 90
+exclude_lines = [
+    "pragma: no cover",
+    "if TYPE_CHECKING:",
+    "raise NotImplementedError",
+    "if __name__ == .__main__.:",
+]

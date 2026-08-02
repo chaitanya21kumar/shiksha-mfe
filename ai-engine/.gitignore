@@ -17,3 +17,10 @@ dist/
 
 # OS
 .DS_Store
+
+# Coverage artefacts. The root .gitignore has `/coverage`, which is anchored to
+# the repository root and does not reach these.
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/

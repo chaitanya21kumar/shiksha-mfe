@@ -297,14 +297,21 @@ def _lesson(steps: list[LessonStep]) -> MicroLesson:
 
 
 def test_steps_must_be_numbered_without_gaps():
-    """A packaged lesson is navigated by position, so a gap reorders the slides."""
+    """A packaged lesson is navigated by position, so a gap reorders the slides.
+
+    The steps are built outside the raises block deliberately. Constructing a
+    LessonStep can itself raise, so building them inside would let this pass for a
+    reason that has nothing to do with the numbering rule under test.
+    """
+    steps = [LessonStep(index=1, title="A"), LessonStep(index=3, title="C")]
     with pytest.raises(ValidationError):
-        _lesson([LessonStep(index=1, title="A"), LessonStep(index=3, title="C")])
+        _lesson(steps)
 
 
 def test_steps_must_not_repeat_a_number():
+    steps = [LessonStep(index=1, title="A"), LessonStep(index=1, title="B")]
     with pytest.raises(ValidationError):
-        _lesson([LessonStep(index=1, title="A"), LessonStep(index=1, title="B")])
+        _lesson(steps)
 
 
 def test_steps_numbered_in_order_are_accepted():
@@ -329,3 +336,67 @@ def test_a_lesson_can_be_read_back_from_its_own_output():
     lesson it produced itself the moment one is POSTed to a packaging endpoint."""
     lesson = _lesson([LessonStep(index=1, title="A")])
     assert MicroLesson.model_validate(lesson.model_dump(mode="json")).step_count == 1
+
+
+# --- what the model returns when it does not follow the shape ---------------------
+#
+# Every branch below is a real thing a model does: a null where a list was asked
+# for, a newline-separated string instead of an array, a list of sentences where
+# one string was expected. None of it is worth losing a step over, so each is
+# coerced rather than rejected — and each needs a test, because a coercion nobody
+# exercises is a guess about behaviour rather than a guarantee.
+
+
+@pytest.mark.parametrize(
+    ("returned", "expected"),
+    [
+        (None, ["Water moves between the oceans, the atmosphere and the land continuously."]),
+        ("- One point\n- Two points", ["One point", "Two points"]),
+        (["Already a list"], ["Already a list"]),
+    ],
+    ids=["null becomes the source fallback", "a string is split into lines", "a list is left alone"],
+)
+def test_bullets_of_the_wrong_shape_are_coerced(returned, expected):
+    lesson = _text_lesson(
+        BODY_A, steps=[{"index": 1, "title": "T", "bullets": returned, "notes": "N"}]
+    )
+    assert lesson.steps[0].bullets == expected
+
+
+@pytest.mark.parametrize(
+    ("returned", "expected"),
+    [
+        (None, ""),
+        (["First sentence.", "  ", "Second sentence."], "First sentence. Second sentence."),
+        ("Already a string.", "Already a string."),
+    ],
+    ids=["null becomes empty", "a list is joined and blanks dropped", "a string is left alone"],
+)
+def test_notes_of_the_wrong_shape_are_coerced(returned, expected):
+    lesson = _text_lesson(
+        BODY_A, steps=[{"index": 1, "title": "T", "bullets": ["B"], "notes": returned}]
+    )
+    assert lesson.steps[0].notes == expected
+
+
+@pytest.mark.parametrize(
+    ("returned", "expected"),
+    [
+        (None, []),
+        ("Explain the cycle", ["Explain the cycle"]),
+        ("   ", []),
+        (["Already a list"], ["Already a list"]),
+    ],
+    ids=["null", "one string becomes one objective", "blank string yields none", "a list is kept"],
+)
+def test_objectives_of_the_wrong_shape_are_coerced(returned, expected):
+    # Built inline rather than through _reply: that helper does `objectives or
+    # [default]`, so passing None would quietly become the default and the null
+    # case would test nothing. The helper defeating the test is the failure mode
+    # this whole block exists to rule out.
+    body = json.dumps({"objectives": returned, "steps": _good_steps(1)})
+    handler = lambda request: httpx.Response(  # noqa: E731
+        200, json={"choices": [{"message": {"content": body}}]}
+    )
+    lesson = _run(lambda c: lesson_from_text(c, BODY_A, _config()), handler)
+    assert lesson.objectives == expected

@@ -172,6 +172,29 @@ Then:
 pytest
 ```
 
+The whole suite runs offline. Every model and speech-to-text call is mocked, so it
+needs no API key, cannot be broken by a provider being down, and costs nothing to
+run. Keep it that way: a test that needs a live key belongs behind a marker.
+
+For coverage:
+
+```bash
+pytest --cov
+```
+
+Coverage is measured by **branch**, not by line, and the threshold lives in
+`pyproject.toml` so the command means the same thing locally and in CI. The reason
+for branch coverage is that most of what this engine promises is about the path
+*not* taken — a question dropped for not being grounded in the source, a warning
+raised where a target format cannot express something, a step falling back to its
+own text when the model returns nothing. Line coverage counts those branches as
+covered the moment the happy path runs through them, which is precisely the case
+where the guarantee is untested.
+
+`tests/test_grader_parity.py` is the exception: it runs our short-answer matcher
+against a verbatim transcription of H5P's own, under `node`, and skips rather than
+fails where node is absent. CI has node, so it runs there.
+
 ## Configuration
 
 All settings are environment variables prefixed `AI_ENGINE_` (or a local
