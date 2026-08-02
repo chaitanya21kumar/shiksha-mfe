@@ -12,7 +12,8 @@ import httpx
 import pytest
 
 from app.ingestion.schema import Block, BlockKind, Page, ParsedDocument, SourceInfo
-from app.narration.pipeline import _build_sections, _estimated_seconds, generate_narration
+from app.ingestion.sections import sections_from_document
+from app.narration.pipeline import _estimated_seconds, generate_narration
 from app.summarization.pipeline import EmptyDocumentError, GenerationConfig
 
 
@@ -72,7 +73,7 @@ def test_build_sections_one_per_slide():
             ],
         ),
     ]
-    sections = _build_sections(_doc(pages))
+    sections = sections_from_document(_doc(pages))
     assert len(sections) == 2
     assert sections[0].title == "Intro" and sections[0].source_index == 1
     assert "Welcome" in sections[0].text
@@ -91,7 +92,7 @@ def test_build_sections_splits_flow_doc_by_headings():
             Block(kind=BlockKind.paragraph, text="Beta."),
         ],
     )
-    sections = _build_sections(_doc([page], fmt="docx"))
+    sections = sections_from_document(_doc([page], fmt="docx"))
     assert [s.title for s in sections] == ["A", "B"]
     assert sections[0].text == "Alpha." and sections[1].text == "Beta."
 
@@ -105,7 +106,7 @@ def test_build_sections_falls_back_to_one_when_no_headings():
             Block(kind=BlockKind.paragraph, text="Second."),
         ],
     )
-    sections = _build_sections(_doc([page], fmt="pdf"))
+    sections = sections_from_document(_doc([page], fmt="pdf"))
     assert len(sections) == 1
     assert sections[0].title is None
     assert "First." in sections[0].text and "Second." in sections[0].text
@@ -113,7 +114,7 @@ def test_build_sections_falls_back_to_one_when_no_headings():
 
 def test_build_sections_skips_empty_pages():
     pages = [Page(index=1, kind="page", blocks=[Block(kind=BlockKind.image)])]
-    assert _build_sections(_doc(pages, fmt="pdf")) == []
+    assert sections_from_document(_doc(pages, fmt="pdf")) == []
 
 
 def test_build_sections_slide_with_multiple_headings_is_one_section():
@@ -129,7 +130,7 @@ def test_build_sections_slide_with_multiple_headings_is_one_section():
             Block(kind=BlockKind.paragraph, text="Right body."),
         ],
     )
-    sections = _build_sections(_doc([page]))
+    sections = sections_from_document(_doc([page]))
     assert len(sections) == 1
     assert sections[0].title == "Left"  # first heading becomes the title
     assert "Left body." in sections[0].text
