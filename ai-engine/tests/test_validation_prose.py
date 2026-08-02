@@ -226,7 +226,8 @@ def test_a_clean_artefact_passes_with_no_issues():
 def test_the_report_flattens_into_the_warnings_a_caller_already_reads():
     report = check_insights(insights(summary="A sentance."), SOURCE)
     flattened = report.as_warnings()
-    assert flattened and all(w.startswith("summary: ") for w in flattened)
+    assert flattened
+    assert all(w.startswith("summary: ") for w in flattened)
 
 
 # --- tokenising -----------------------------------------------------------------

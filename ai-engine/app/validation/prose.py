@@ -47,9 +47,12 @@ _WORD = re.compile(r"[^\W\d_]+(?:['’\-][^\W\d_]+)*", re.UNICODE)
 #: rather than filtered afterwards, so their inner words never become candidates.
 _IGNORE = (
     re.compile(r"https?://\S+"),          # URLs
-    re.compile(r"\S+@\S+\.\S+"),          # e-mail addresses
-    re.compile(r"\$\$.+?\$\$", re.S),     # display maths
-    re.compile(r"\\\(.+?\\\)", re.S),     # inline maths
+    # Each run excludes the delimiter that follows it, so there is nothing for
+    # the engine to backtrack over: the naive \S+@\S+\.\S+ is quadratic on a
+    # long token that turns out to have no "@" in it at all.
+    re.compile(r"[^\s@]+@[^\s@]+\.[^\s@]+"),  # e-mail addresses
+    re.compile(r"\$\$[^$]*\$\$"),          # display maths
+    re.compile(r"\\\([^\\]*\\\)"),        # inline maths
     re.compile(r"\\[a-zA-Z]+"),           # stray LaTeX commands
     re.compile(r"`[^`]+`"),               # inline code
     re.compile(r"\[\[\d+\]\]"),           # our own fill-in-the-blank markers
@@ -183,6 +186,23 @@ class ProseChecker:
             self.allowed |= fresh
             self._spell.word_frequency.load_words(fresh)
 
+    def _first_bad_piece(self, word: str) -> str | None:
+        """The piece of `word` no dictionary knows, or None if it is fine.
+
+        A compound is judged by its pieces: every piece known means the compound
+        is fine even though no dictionary lists it. The piece is returned rather
+        than the whole word so the suggestion is useful — correcting
+        "light-independant" should offer "independent", not hunt for an entry for
+        the whole phrase.
+        """
+        if word in self.allowed:
+            return None
+        pieces = [p for p in parts_of(word) if p not in self.allowed]
+        if not pieces:
+            return None
+        unknown = self._spell.unknown(pieces)
+        return next((p for p in pieces if p in unknown), None)
+
     def check(self, text: str, field_path: str) -> list[ValidationIssue]:
         """Flag the words in one generated fragment that no dictionary knows."""
         if not self.available or not text:
@@ -192,23 +212,13 @@ class ProseChecker:
         for word in words_in(text):
             lowered = word.lower()
             # A word wrong twice in one field is one problem to fix, not two.
-            if lowered in seen or lowered in self.allowed:
+            if lowered in seen:
                 continue
             seen.add(lowered)
-            # A compound is judged by its pieces. Every piece known means the
-            # compound is fine even though no dictionary lists it.
-            pieces = [p for p in parts_of(lowered) if p not in self.allowed]
-            if not pieces:
+            bad = self._first_bad_piece(lowered)
+            if bad is None:
                 continue
-            unknown = self._spell.unknown(pieces)
-            if not unknown:
-                continue
-            # Report the piece that is actually wrong, so the suggestion is useful:
-            # correcting "light-independant" should offer "independent", not try to
-            # find a dictionary entry for the whole phrase.
-            bad = next(p for p in pieces if p in unknown)
             correction = self._spell.correction(bad)
-            lowered = bad
             word = bad if bad != word.lower() else word
             issues.append(
                 ValidationIssue(

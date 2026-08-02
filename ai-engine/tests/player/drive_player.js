@@ -7,7 +7,7 @@
  * player does that.
  */
 const puppeteer = require("puppeteer-core");
-const path = require("path");
+const path = require("node:path");
 
 const CHROME = process.env.CHROME_PATH || "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome";
 const ROOT = process.argv[2];
@@ -39,8 +39,10 @@ function check(name, ok, detail) {
   await page.reload({ waitUntil: "networkidle0" });
   const afterReload = await page.$eval("#timer", (e) => e.textContent);
   const parse = (t) => {
-    const m = /(\d+):(\d+)/.exec(t || "");
-    return m ? parseInt(m[1], 10) * 60 + parseInt(m[2], 10) : NaN;
+    const m = /(\d{1,3}):(\d{2})/.exec(t || "");
+    return m
+      ? Number.parseInt(m[1], 10) * 60 + Number.parseInt(m[2], 10)
+      : Number.NaN;
   };
   check(
     "reload does not hand the learner their time back",
@@ -52,7 +54,7 @@ function check(name, ok, detail) {
   // Wind the stored deadline to just ahead of now, then reload: the same code
   // path a learner hits, without waiting out the real limit.
   await page.evaluate(() => {
-    const k = Object.keys(window.sessionStorage).find((x) => x.indexOf("scorm-deadline:") === 0);
+    const k = Object.keys(window.sessionStorage).find((x) => x.startsWith("scorm-deadline:"));
     window.sessionStorage.setItem(k, String(Date.now() + 2500));
   });
   await page.reload({ waitUntil: "networkidle0" });
@@ -69,8 +71,8 @@ function check(name, ok, detail) {
   await new Promise((r) => setTimeout(r, 4000));
   const expired = await page.evaluate(() => ({
     results: !document.getElementById("results").hidden,
-    clock: (document.getElementById("timer") || {}).textContent || "",
-    hiddenClock: (document.getElementById("timer") || {}).hidden,
+    clock: document.getElementById("timer")?.textContent || "",
+    hiddenClock: document.getElementById("timer")?.hidden,
   }));
   check("expiry submits past the guard", expired.results, JSON.stringify(expired));
   await page.close();

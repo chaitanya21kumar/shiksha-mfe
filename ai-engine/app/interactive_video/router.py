@@ -62,6 +62,10 @@ _VIDEO_URL_QUERY = Query(
     description="Public http(s) URL the LMS will stream the media from. The package "
     "references the media rather than embedding it."
 )
+#: What a caller gets if they do not say. mp4 because it is the one container
+#: every browser H5P supports will play.
+DEFAULT_VIDEO_MIME = "video/mp4"
+
 _VIDEO_MIME_QUERY = Query(
     description="The media's MIME type. Only video/mp4, video/webm and video/ogg play "
     "natively in H5P.Video; anything else packages but warns, because the learner "
@@ -100,7 +104,9 @@ def _resolve_types(requested: list[QuestionType] | None) -> list[QuestionType]:
     return chosen
 
 
-def _video_source(url: str, mime: str = "video/mp4", subtitles: str | None = None) -> VideoSource:
+def _video_source(
+    url: str, mime: str = DEFAULT_VIDEO_MIME, subtitles: str | None = None
+) -> VideoSource:
     """Build the video source, turning a bad URL into a 400 rather than a 500.
 
     ``video_url`` arrives as a plain query string, so its validation lives in the
@@ -134,7 +140,7 @@ async def interactive_video(
     client: Annotated[httpx.AsyncClient, Depends(get_llm_client)],
     chaptered: Annotated[ChapteredTranscript, Body()],
     video_url: Annotated[str, _VIDEO_URL_QUERY],
-    video_mime: Annotated[str, _VIDEO_MIME_QUERY] = "video/mp4",
+    video_mime: Annotated[str, _VIDEO_MIME_QUERY] = DEFAULT_VIDEO_MIME,
     subtitles_url: Annotated[str | None, _SUBTITLES_QUERY] = None,
     title: Annotated[str, _TITLE_QUERY] = "Interactive video",
     question_types: Annotated[list[QuestionType] | None, _TYPES_QUERY] = None,
@@ -158,7 +164,7 @@ async def interactive_video_file(
     stt_client: Annotated[httpx.AsyncClient, Depends(get_stt_client)],
     llm_client: Annotated[httpx.AsyncClient, Depends(get_llm_client)],
     video_url: Annotated[str, _VIDEO_URL_QUERY],
-    video_mime: Annotated[str, _VIDEO_MIME_QUERY] = "video/mp4",
+    video_mime: Annotated[str, _VIDEO_MIME_QUERY] = DEFAULT_VIDEO_MIME,
     subtitles_url: Annotated[str | None, _SUBTITLES_QUERY] = None,
     title: Annotated[str, _TITLE_QUERY] = "Interactive video",
     question_types: Annotated[list[QuestionType] | None, _TYPES_QUERY] = None,

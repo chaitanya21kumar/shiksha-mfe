@@ -182,8 +182,9 @@ def test_a_mistyped_field_is_refused_rather_than_dropped():
     checks at all, reported only as a warning. A caller POSTing the wrong key
     deserves a 422, not a quietly emptier package.
     """
+    question = _mcq()
     with pytest.raises(ValidationError):
-        ChapterCheck(chapter_index=1, question=_mcq())
+        ChapterCheck(chapter_index=1, question=question)
 
 
 def test_the_correct_field_still_works():

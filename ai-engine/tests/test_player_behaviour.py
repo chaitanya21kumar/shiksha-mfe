@@ -81,11 +81,11 @@ def test_the_player_behaves_as_the_teacher_configured_it(unpacked: Path):
     run = subprocess.run(
         ["node", str(HARNESS), str(unpacked)], capture_output=True, text=True, timeout=180
     )
-    report = run.stdout.strip().splitlines()[-1] if run.stdout.strip() else "{}"
-    try:
-        summary = json.loads(report)
-    except json.JSONDecodeError:  # pragma: no cover - only on a harness crash
-        pytest.fail(f"harness produced no report\nstdout:\n{run.stdout}\nstderr:\n{run.stderr}")
+    assert run.stdout.strip(), f"the harness printed nothing\nstderr:\n{run.stderr}"
+    # The last line is the JSON summary. A crash mid-run leaves something else
+    # there, and letting json raise shows exactly what, which is more useful than
+    # a message we wrote guessing at it.
+    summary = json.loads(run.stdout.strip().splitlines()[-1])
     assert summary.get("failed") == [], (
         f"{summary.get('failed')} failed out of {summary.get('total')}\n{run.stdout}"
     )

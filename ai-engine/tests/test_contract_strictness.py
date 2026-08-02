@@ -102,7 +102,8 @@ def test_an_assessment_set_survives_its_own_round_trip():
     """
     original = make_set(questions=[make_mcq()])
     dumped = json.loads(original.model_dump_json())
-    assert "max_points" in dumped and "counts" in dumped
+    assert "max_points" in dumped
+    assert "counts" in dumped
     assert AssessmentSet.model_validate(dumped).questions[0].id == "q1"
 
 

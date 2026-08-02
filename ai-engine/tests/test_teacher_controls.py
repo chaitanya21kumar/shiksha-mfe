@@ -119,8 +119,9 @@ def test_no_invented_timer_key_reaches_the_h5p_content():
 
 @pytest.mark.parametrize("bad", [0, 29, 86_401])
 def test_an_implausible_time_limit_is_refused(bad):
+    question = make_mcq()
     with pytest.raises(ValidationError):
-        make_set(questions=[make_mcq()], time_limit_seconds=bad)
+        make_set(questions=[question], time_limit_seconds=bad)
 
 
 @pytest.mark.parametrize("good", [30, 600, 86_400])
@@ -129,8 +130,9 @@ def test_a_plausible_time_limit_is_accepted(good):
 
 
 def test_an_unknown_visibility_is_refused():
+    question = make_mcq()
     with pytest.raises(ValidationError):
-        make_set(questions=[make_mcq()], solution_visibility="teacher_release")
+        make_set(questions=[question], solution_visibility="teacher_release")
 
 
 def test_the_defaults_preserve_the_previous_behaviour():
@@ -208,7 +210,8 @@ def test_the_deadline_is_stored_as_an_instant_not_a_remaining_duration():
     """A learner who reloads must not be handed their time back."""
     source = player_source()
     assert "cmi.suspend_data" in source
-    assert "loadDeadline" in source and "saveDeadline" in source
+    assert "loadDeadline" in source
+    assert "saveDeadline" in source
 
 
 def test_the_solution_gate_runs_before_anything_that_reveals_an_answer():
