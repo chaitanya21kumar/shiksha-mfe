@@ -14,11 +14,13 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class GlossaryTerm(BaseModel):
     """A term drawn from the source, with a plain-language definition."""
+
+    model_config = ConfigDict(extra="forbid")
 
     term: str
     definition: str = Field(description="A short, learner-friendly definition.")
@@ -26,6 +28,8 @@ class GlossaryTerm(BaseModel):
 
 class OutlineSection(BaseModel):
     """One section of a suggested course outline."""
+
+    model_config = ConfigDict(extra="forbid")
 
     title: str
     points: list[str] = Field(
@@ -37,6 +41,8 @@ class OutlineSection(BaseModel):
 class InsightsSource(BaseModel):
     """A pointer back to the document these insights were derived from."""
 
+    model_config = ConfigDict(extra="forbid")
+
     filename: str
     title: str | None = None
     page_count: int = Field(description="Pages (PDF) or slides (PPT) in the source.")
@@ -44,6 +50,8 @@ class InsightsSource(BaseModel):
 
 class DocumentInsights(BaseModel):
     """Everything Module A.2 derives from one parsed document."""
+
+    model_config = ConfigDict(extra="forbid")
 
     schema_version: str = "1.0"
     source: InsightsSource

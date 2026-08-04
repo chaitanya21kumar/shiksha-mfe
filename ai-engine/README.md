@@ -51,6 +51,22 @@ threshold, and score bands — rides along, and LaTeX renders through H5P's
 MathDisplay. The emitter is pure Python and writes the ZIP directly; see
 [`docs/adr/0004`](docs/adr/0004-pure-python-h5p-packaging.md).
 
+**Teacher controls** over the packaged quiz, both asked for by the mentors.
+`solution_visibility` decides when a learner may see the correct answers — `always`,
+`after_submission`, or `never` — and `time_limit_seconds` puts a countdown on the
+whole attempt. Both are fields on the `AssessmentSet`, so a caller running the
+two-step flow can set them while reviewing the questions, and both are query
+parameters on every route that generates, so the one-call routes can set them too.
+
+They land differently in the two targets, because the targets differ. H5P Question
+Set has three real fields for answer visibility and **no timer of any kind** — that
+was verified against the shipped `semantics.json` of all seven content types rather
+than assumed — so a time limit on an H5P package is reported as unsupported in the
+warnings instead of being written to an invented key that the validator would drop
+in silence. SCORM carries its own player, so both controls work there: the deadline
+is stored as an instant in `cmi.suspend_data` and survives the learner closing the
+tab, and running out of time reports `cmi.core.exit` as `time-out`.
+
 **Short answers** are the one type a learner writes in their own words. Because a
 packaged quiz runs inside the LMS with no model available, they are marked by a
 **points-based mark scheme** — two to four key points, each detected by exact,

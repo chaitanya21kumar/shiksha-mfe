@@ -12,11 +12,13 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class NarrationSegment(BaseModel):
     """One speakable unit of narration, aligned to a slide or section."""
+
+    model_config = ConfigDict(extra="forbid")
 
     index: int = Field(description="1-based position of this segment in the narration.")
     source_index: int | None = Field(
@@ -34,6 +36,8 @@ class NarrationSegment(BaseModel):
 class NarrationSource(BaseModel):
     """A pointer back to the document this narration was derived from."""
 
+    model_config = ConfigDict(extra="forbid")
+
     filename: str
     title: str | None = None
     page_count: int = Field(description="Pages, slides or sheets in the source.")
@@ -41,6 +45,8 @@ class NarrationSource(BaseModel):
 
 class NarrationScript(BaseModel):
     """Everything Module A.3 derives from one parsed document."""
+
+    model_config = ConfigDict(extra="forbid")
 
     schema_version: str = "1.0"
     source: NarrationSource

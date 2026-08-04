@@ -61,6 +61,34 @@ from ..packaging.h5p import (
 )
 from .schema import KNOWN_VIDEO_MIMES, InteractiveVideoSpec
 
+def _text_tracks(spec: InteractiveVideoSpec) -> list[dict[str, object]]:
+    """The caption tracks, which is either none or exactly one.
+
+    Every field here is mandatory in practice, whatever the semantics say is
+    optional. `kind` in particular: `html5.js` reads it off the first entry while
+    building the ``<track>`` element and throws a TypeError on the learner's page
+    if it is missing, so a track emitted without one is worse than no track.
+
+    The path is an absolute URL, which H5P returns untouched from `getPath` —
+    `/^[a-z0-9]+:\\/\\//i` decides that. The same reference-don't-bundle rule as the
+    media, for the same reason.
+    """
+    if not spec.video.subtitles_url:
+        return []
+    return [
+        {
+            "label": "Subtitles",
+            "kind": "subtitles",
+            "srcLang": spec.video.subtitles_language,
+            "track": {
+                "path": escape_text(spec.video.subtitles_url),
+                "mime": "text/vtt",
+                "copyright": {"license": "U"},
+            },
+        }
+    ]
+
+
 #: How long a knowledge check stays on screen once it appears, in seconds. The
 #: video is paused for it, so this is only the window in which it is reachable.
 _INTERACTION_WINDOW = 20.0
@@ -375,6 +403,11 @@ def emit_interactive_video(spec: InteractiveVideoSpec) -> H5PPackage:
     """Build an importable ``.h5p`` Interactive Video from a chaptered transcript."""
     warnings = list(spec.warnings)
 
+    if spec.video.subtitles_url:
+        warnings.append(
+            "Subtitles are referenced by URL, so the host serving them must allow the LMS "
+            "to read them cross-origin or the caption track will silently stay empty."
+        )
     if spec.video.mime not in KNOWN_VIDEO_MIMES:
         warnings.append(
             f"The video mime {spec.video.mime!r} is outside what H5P.Video plays natively "
@@ -406,16 +439,19 @@ def emit_interactive_video(spec: InteractiveVideoSpec) -> H5PPackage:
                     ),
                     "hideStartTitle": False,
                 },
-                # Emitted even though it is empty: the constructor's default for
-                # this key is applied by a *shallow* extend, so writing `video` at
-                # all removes it — and getCopyrights dereferences it unguarded.
-                "textTracks": {"videoTrack": []},
+                # Always emitted, empty or not: the constructor's default for this
+                # key is applied by a *shallow* extend, so writing `video` at all
+                # removes it — and getCopyrights dereferences it unguarded.
+                "textTracks": {"videoTrack": _text_tracks(spec)},
                 # Referenced, not bundled — the shape H5P's own published content
                 # uses. "U" is Undisclosed: the recording is the tenant's, so the
                 # engine is in no position to assert a licence on their behalf.
                 "files": [
                     {
-                        "path": spec.video.url,
+                        # Escaped like every other string that reaches the page.
+                        # H5P.Video passes the path through `$cleaner.html(p).text()`,
+                        # so an unescaped entity here does not round-trip.
+                        "path": escape_text(spec.video.url),
                         "mime": spec.video.mime,
                         "copyright": {"license": "U"},
                     }

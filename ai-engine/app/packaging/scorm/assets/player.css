@@ -137,3 +137,23 @@ button:hover { background: #1d4ed8; }
 .verdict.fail { color: #b91c1c; }
 .band { margin: 0 0 16px; color: #475569; }
 .explanation { font-size: 14px; color: #475569; padding: 5px 0; }
+
+/* The countdown. Sticky so it stays readable on a long paper, and it changes
+   colour as well as text near the end: colour alone would not reach a learner
+   who cannot see it, which is why the last minutes are also announced. */
+#timer {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  padding: 8px 14px;
+  margin: 0 0 14px;
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  color: #0f172a;
+  background: #f1f5f9;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+}
+#timer.urgent { color: #b91c1c; background: #fef2f2; border-color: #fecaca; }
+
+.solutions-withheld { margin: 12px 0 0; color: #475569; }

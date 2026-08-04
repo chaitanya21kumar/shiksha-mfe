@@ -381,6 +381,11 @@ def emit_scorm(assessment: AssessmentSet) -> ScormPackage:
     payload = {
         "title": title,
         "language": assessment.language,
+        # The player keys its stored deadline on this, so two assessments open in
+        # the same tab cannot inherit each other's clock.
+        "assessment_id": assessment.assessment_id,
+        "solution_visibility": assessment.solution_visibility,
+        "time_limit_seconds": assessment.time_limit_seconds,
         "pass_percentage": assessment.pass_percentage,
         "max_points": assessment.max_points,
         "score_bands": [

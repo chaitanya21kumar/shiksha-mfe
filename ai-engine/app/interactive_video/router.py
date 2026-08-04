@@ -62,6 +62,19 @@ _VIDEO_URL_QUERY = Query(
     description="Public http(s) URL the LMS will stream the media from. The package "
     "references the media rather than embedding it."
 )
+#: What a caller gets if they do not say. mp4 because it is the one container
+#: every browser H5P supports will play.
+DEFAULT_VIDEO_MIME = "video/mp4"
+
+_VIDEO_MIME_QUERY = Query(
+    description="The media's MIME type. Only video/mp4, video/webm and video/ogg play "
+    "natively in H5P.Video; anything else packages but warns, because the learner "
+    "would get an empty player."
+)
+_SUBTITLES_QUERY = Query(
+    description="Optional http(s) URL of a WebVTT subtitle track, shown as a caption "
+    "option in the player. Referenced rather than embedded, exactly like the media."
+)
 _TYPES_QUERY = Query(
     description="Question types for the knowledge checks (any of mcq, match, fill_blank). "
     "short_answer is not accepted: Interactive Video does not allow H5P.Essay."
@@ -91,7 +104,9 @@ def _resolve_types(requested: list[QuestionType] | None) -> list[QuestionType]:
     return chosen
 
 
-def _video_source(url: str) -> VideoSource:
+def _video_source(
+    url: str, mime: str = DEFAULT_VIDEO_MIME, subtitles: str | None = None
+) -> VideoSource:
     """Build the video source, turning a bad URL into a 400 rather than a 500.
 
     ``video_url`` arrives as a plain query string, so its validation lives in the
@@ -99,7 +114,7 @@ def _video_source(url: str) -> VideoSource:
     caller mistake look like a server fault.
     """
     try:
-        return VideoSource(url=url)
+        return VideoSource(url=url, mime=mime, subtitles_url=subtitles)
     except ValidationError as invalid:
         raise HTTPException(status_code=400, detail=str(invalid.errors()[0]["msg"])) from invalid
 
@@ -125,6 +140,8 @@ async def interactive_video(
     client: Annotated[httpx.AsyncClient, Depends(get_llm_client)],
     chaptered: Annotated[ChapteredTranscript, Body()],
     video_url: Annotated[str, _VIDEO_URL_QUERY],
+    video_mime: Annotated[str, _VIDEO_MIME_QUERY] = DEFAULT_VIDEO_MIME,
+    subtitles_url: Annotated[str | None, _SUBTITLES_QUERY] = None,
     title: Annotated[str, _TITLE_QUERY] = "Interactive video",
     question_types: Annotated[list[QuestionType] | None, _TYPES_QUERY] = None,
     count: Annotated[int, _COUNT_QUERY] = 1,
@@ -134,7 +151,7 @@ async def interactive_video(
     spec = await build_interactive_video(
         client,
         chaptered,
-        _video_source(video_url),
+        _video_source(video_url, video_mime, subtitles_url),
         generation_config(),
         _options(chaptered.source.filename, title, question_types, count, language),
     )
@@ -147,6 +164,8 @@ async def interactive_video_file(
     stt_client: Annotated[httpx.AsyncClient, Depends(get_stt_client)],
     llm_client: Annotated[httpx.AsyncClient, Depends(get_llm_client)],
     video_url: Annotated[str, _VIDEO_URL_QUERY],
+    video_mime: Annotated[str, _VIDEO_MIME_QUERY] = DEFAULT_VIDEO_MIME,
+    subtitles_url: Annotated[str | None, _SUBTITLES_QUERY] = None,
     title: Annotated[str, _TITLE_QUERY] = "Interactive video",
     question_types: Annotated[list[QuestionType] | None, _TYPES_QUERY] = None,
     count: Annotated[int, _COUNT_QUERY] = 1,
@@ -154,7 +173,7 @@ async def interactive_video_file(
 ) -> Response:
     """Transcribe, chapter, question and package a recording in one call."""
     options = _options(file.filename or "interactive-video", title, question_types, count, language)
-    source = _video_source(video_url)
+    source = _video_source(video_url, video_mime, subtitles_url)
     transcript = await transcribe_upload(file, transcription_config(), stt_client)
     chaptered = await generate_chapters(llm_client, transcript, generation_config())
     spec = await build_interactive_video(

@@ -21,6 +21,18 @@ dev = [
     "pytest>=8",
     "pytest-cov>=5",
 ]
+# Spelling checks over generated prose. Optional on purpose: the suite has to run
+# with no API key, no network and no extra install, so the engine degrades to
+# "check skipped, and here is why" when this is absent.
+#
+# pyspellchecker rather than the alternatives: MIT, no dependencies of its own, no
+# Java runtime, and it ships its dictionaries in the wheel so nothing is fetched at
+# import time. LanguageTool would have given real grammar checking but is GPL-3.0,
+# needs a JVM, and downloads a language pack on first use — three separate reasons
+# it cannot go in a service Tekdi ships to a tenant.
+spelling = [
+    "pyspellchecker>=0.8",
+]
 
 [build-system]
 requires = ["setuptools>=68"]

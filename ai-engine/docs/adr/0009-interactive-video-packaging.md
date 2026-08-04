@@ -143,9 +143,15 @@ H5PEditor tree as a runtime requirement. The Hub's own package proves the rule �
 
 ## Deliberately deferred
 
-- **Subtitles as a text track.** `video.textTracks.videoTrack[]` takes a WebVTT
-  file, and Module C.1 already produces exactly that — a natural next step, and one
-  that needs the caller to host the `.vtt` as they host the video.
+- ~~**Subtitles as a text track.**~~ **Done, 2026-08-01.** `subtitles_url` on
+  `VideoSource`, referenced rather than embedded for the same reason the media is:
+  `getPath` returns anything matching `/^[a-z0-9]+:\/\//i` untouched, so an absolute
+  URL resolves as written. Every field of the entry is emitted — `label`, `kind`,
+  `srcLang`, `track` — because `kind` is optional in the semantics and mandatory in
+  practice: `html5.js` reads it off the first entry while building the `<track>`
+  element and throws on the learner's page without it. Referencing means the caption
+  is fetched cross-origin, which a missing header turns into a permanently empty
+  caption menu, so the emitter warns.
 - **Adaptivity** (`requireCompletion`, branching on a wrong answer). The contract
   has room for it; nothing generates the branching logic yet.
 - **`endscreens` and the end-of-video summary task**, for the reason in decision 6.
