@@ -1,0 +1,93 @@
+# Tests and coverage for the Python AI engine.
+#
+# Scoped to `ai-engine/**` on purpose. This repository is a Next.js monorepo and
+# everything else in it is JavaScript, so an unfiltered workflow would spend most
+# of its runs installing Python to test nothing.
+#
+# The suite is fully offline — every model and speech-to-text call is mocked — so
+# this needs no API keys and no secrets, and cannot be broken by a provider being
+# down or a free-tier budget running out. That is a property worth keeping: if a
+# test ever needs a live key to pass, it belongs behind a marker, not here.
+name: ai-engine
+
+on:
+  push:
+    branches: [main, C4gt]
+    paths:
+      - "ai-engine/**"
+      - ".github/workflows/ai-engine.yml"
+  pull_request:
+    paths:
+      - "ai-engine/**"
+      - ".github/workflows/ai-engine.yml"
+
+# A newer push to the same branch makes the previous run pointless.
+concurrency:
+  group: ai-engine-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    # The suite finishes in well under a minute. Without a ceiling a wedged job
+    # holds a runner for six hours by default, and the failure looks like a
+    # queue rather than a bug.
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: ai-engine
+
+    strategy:
+      fail-fast: false
+      matrix:
+        # The floor pyproject declares (requires-python = ">=3.11") and the version
+        # this is developed on. Testing only the newer one would let the declared
+        # floor rot unnoticed.
+        python-version: ["3.11", "3.12"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+          cache-dependency-path: ai-engine/requirements-ci.txt
+
+      - name: Install dependencies
+        # Exact versions with hashes, and wheels only.
+        #
+        # --require-hashes means every package is checked against the fingerprint
+        # recorded in requirements-ci.txt, so nothing can be swapped underneath
+        # this build even if an account on the package index is compromised.
+        #
+        # --only-binary :all: refuses source distributions. Installing from source
+        # executes the package's own setup script on the runner, which is an
+        # arbitrary-code path nobody reviews. Every dependency here publishes
+        # wheels, so nothing is lost by forbidding it.
+        #
+        # The engine itself is not installed. pyproject sets pytest's `pythonpath`
+        # to the project root, so `app` imports from the source tree — an editable
+        # install was never what made the tests run, and because it points at the
+        # source it would not exercise the wheel's package-data either. It was a
+        # step that proved nothing, and SonarCloud was right to read `-e .` as an
+        # unpinned install.
+        run: |
+          pip install --require-hashes --only-binary :all: -r requirements-ci.txt
+
+      - name: Test with coverage
+        # The threshold lives in pyproject, so this command means the same thing
+        # here and on a developer's machine.
+        run: pytest -q --cov --cov-report=term-missing --cov-report=xml
+
+      - name: Upload the coverage report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-${{ matrix.python-version }}
+          path: ai-engine/coverage.xml
+          if-no-files-found: error
