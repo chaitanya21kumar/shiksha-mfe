@@ -15,5 +15,13 @@ stay in `app.packaging`, exactly as Module B and Module C use them.
 from .errors import EmptyLessonError
 from .h5p import emit_h5p
 from .html5 import Html5Package, emit_html5
+from .scorm import ScormPackage, emit_scorm
 
-__all__ = ["EmptyLessonError", "Html5Package", "emit_h5p", "emit_html5"]
+__all__ = [
+    "EmptyLessonError",
+    "Html5Package",
+    "ScormPackage",
+    "emit_h5p",
+    "emit_html5",
+    "emit_scorm",
+]
