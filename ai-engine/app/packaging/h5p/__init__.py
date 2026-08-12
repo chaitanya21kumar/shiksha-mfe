@@ -10,9 +10,13 @@ from .package import CONTENT_NAME, MANIFEST_NAME, H5PPackage, write_h5p
 from ..naming import escape_text, sanitise_filename
 from .subcontent import subcontent_id, wrap
 from .versions import (
+    ADVANCED_TEXT,
     ALLOWED_INTERACTION_LIBRARIES,
     ALLOWED_QUESTION_LIBRARIES,
+    ALLOWED_SLIDE_ELEMENT_LIBRARIES,
     BLANKS,
+    COURSE_PRESENTATION,
+    COURSE_PRESENTATION_CLOSURE,
     CLOSURE,
     DRAGTEXT,
     ESSAY,
@@ -26,10 +30,14 @@ from .versions import (
 )
 
 __all__ = [
+    "ADVANCED_TEXT",
     "ALLOWED_INTERACTION_LIBRARIES",
     "ALLOWED_QUESTION_LIBRARIES",
+    "ALLOWED_SLIDE_ELEMENT_LIBRARIES",
     "BLANKS",
     "CLOSURE",
+    "COURSE_PRESENTATION",
+    "COURSE_PRESENTATION_CLOSURE",
     "CONTENT_NAME",
     "DRAGTEXT",
     "ESSAY",
