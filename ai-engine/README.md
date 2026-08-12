@@ -136,6 +136,30 @@ from and get an answer. A section the model returns nothing for falls back to it
 own source text and says so; a step the model invents for a section that does not
 exist is discarded. See [`docs/adr/0011`](docs/adr/0011-micro-lesson-structure.md).
 
+**Module D.2** turns that lesson into something a learner can open. The same
+`MicroLesson` is packaged three ways, because the three answer different questions.
+`POST /micro-lesson/h5p` emits an **H5P Course Presentation** — one slide per step,
+which is what a Moodle or Sunbird teacher expects and what an LMS knows how to
+render. `POST /micro-lesson/html5` emits **one self-contained HTML file**: no LMS,
+no unzipping, nothing fetched from the network, so it opens on a machine with no
+internet. `POST /micro-lesson/scorm` emits a **SCORM 1.2 course**, the only one of
+the three that reports back — the LMS learns who opened the lesson and how far they
+got. Each has a `/file` variant that goes from upload to package in one call.
+
+The HTML5 file and the SCORM course share one renderer, so they cannot drift into
+looking different; SCORM adds only an API wrapper and a reporting script that
+listens on the single hook the deck exposes. That reporting is deliberately
+narrower than the assessment package's: **no score is written at all**, because a
+lesson asks nothing and 0 out of 0 is a zero rather than an absence, which more
+than one LMS renders as a failed attempt. Completion means the last slide was
+reached, and `lesson_status` only ever moves `incomplete` → `completed`.
+
+H5P Course Presentation has **no speaker-notes field**, verified against the
+package the Hub serves. The generated notes go in the element's Comments field,
+which the runtime turns into a button on the slide — and the flag that builds that
+button is named `alwaysDisplayComments`, which controls the *button*, not the text.
+See [`docs/adr/0012`](docs/adr/0012-micro-lesson-packaging.md).
+
 ## Requirements
 
 - Python 3.11+ (developed on 3.12)
@@ -179,6 +203,12 @@ Then:
 - `POST /micro-lesson/file` — parse an upload and build a micro-lesson in one call
 - `POST /micro-lesson/transcript` — build a micro-lesson from a chaptered recording
 - `POST /micro-lesson/text` — build a micro-lesson from pasted text
+- `POST /micro-lesson/h5p` — package a micro-lesson as an H5P Course Presentation (`.h5p`)
+- `POST /micro-lesson/h5p/file` — parse an upload, build a lesson and package it as H5P in one call
+- `POST /micro-lesson/html5` — package a micro-lesson as one self-contained HTML file
+- `POST /micro-lesson/html5/file` — parse an upload, build a lesson and return one HTML file in one call
+- `POST /micro-lesson/scorm` — package a micro-lesson as a SCORM 1.2 course (`.zip`)
+- `POST /micro-lesson/scorm/file` — parse an upload, build a lesson and package it as SCORM in one call
 - `GET /` — service banner
 - `GET /docs` — interactive API docs
 
