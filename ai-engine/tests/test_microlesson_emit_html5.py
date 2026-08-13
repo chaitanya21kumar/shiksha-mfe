@@ -46,9 +46,16 @@ def html_of(lesson: MicroLesson) -> str:
 
 
 def test_nothing_is_loaded_from_anywhere():
-    """The whole reason this format exists next to the other two."""
+    """The whole reason this format exists next to the other two.
+
+    Both quote styles are matched. A first version only looked for double quotes,
+    which is what this renderer happens to emit — so it would have waved through a
+    single-quoted `src='./deck.js'`, a reference carrying no scheme for the URL scan
+    below to catch either. Found by mutation: a single-quoted CDN stylesheet passed
+    this test untouched.
+    """
     html = html_of(make_lesson())
-    refs = re.findall(r'(?:src|href)="(?!#)([^"]+)"', html)
+    refs = re.findall(r"""(?:src|href)\s*=\s*["'](?!#)([^"']+)["']""", html)
     assert refs == [], f"the deck reaches out to {refs}"
 
 
