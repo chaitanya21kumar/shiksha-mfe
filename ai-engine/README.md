@@ -160,6 +160,15 @@ which the runtime turns into a button on the slide — and the flag that builds 
 button is named `alwaysDisplayComments`, which controls the *button*, not the text.
 See [`docs/adr/0012`](docs/adr/0012-micro-lesson-packaging.md).
 
+**Both packages have been imported into a real Moodle 4.5**, not only into a test
+harness. The SCORM course played inside Moodle against its own JavaScript API,
+moved the learner from `incomplete` to `completed` on reaching the last slide, and
+appears in Moodle's own attempt report. The H5P package imported cleanly and Moodle
+then listed the libraries it needs — naming exactly the six the manifest declares,
+including `H5P.Transition`, which Course Presentation does **not** declare directly
+and which only a transitive walk of the dependency tree finds. That is independent
+confirmation the manifest is complete.
+
 ## Requirements
 
 - Python 3.11+ (developed on 3.12)

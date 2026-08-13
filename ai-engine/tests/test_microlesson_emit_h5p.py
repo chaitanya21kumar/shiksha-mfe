@@ -301,3 +301,27 @@ def test_a_step_with_points_and_no_heading_still_gets_its_slide():
     assert len(slides) == 1
     assert len(slides[0]["elements"]) == 1
     assert "A real point" in slides[0]["elements"][0]["action"]["params"]["text"]
+
+
+def test_devanagari_survives_into_the_package():
+    """The tenants this is built for teach in Hindi and Marathi. The package writes
+    JSON with ensure_ascii=False for exactly this reason: escaping to \\uXXXX would
+    bloat the file and destroy the readability that makes a generated artefact
+    reviewable by the teacher whose document it came from."""
+    lesson = make_lesson(
+        title="जल चक्र",
+        steps=[LessonStep(index=1, title="वाष्पीकरण", bullets=["सूर्य समुद्र को गर्म करता है"], notes="")],
+    )
+    payload = json.dumps(content_of(lesson), ensure_ascii=False)
+    assert "वाष्पीकरण" in payload
+    assert "\\u0935" not in payload
+
+
+def test_notes_that_are_only_whitespace_build_no_button():
+    """A comment of spaces would render an empty popup behind a button that looks
+    like it offers something. The runtime's own guard checks the trimmed text, so
+    this matches what it does rather than second-guessing it."""
+    lesson = make_lesson(steps=[LessonStep(index=1, title="A", bullets=["b"], notes="   ")])
+    body = slides_of(lesson)[0]["elements"][1]
+    assert "solution" not in body
+    assert "alwaysDisplayComments" not in body

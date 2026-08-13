@@ -200,3 +200,29 @@ def test_a_step_with_points_and_no_heading_still_gets_a_slide():
     assert html.count('class="slide"') == 1
     assert "A point" in html
     assert "<h2>" not in html
+
+
+def test_devanagari_survives_and_the_language_is_declared():
+    """Written as UTF-8 with the charset declared, so a browser opening the file
+    from a pen drive renders it rather than showing mojibake."""
+    lesson = make_lesson(
+        title="जल चक्र", language="hi",
+        steps=[LessonStep(index=1, title="वाष्पीकरण", bullets=["सूर्य समुद्र को गर्म करता है"], notes="")],
+    )
+    html = html_of(lesson)
+    assert "वाष्पीकरण" in html
+    assert '<html lang="hi"' in html
+    assert '<meta charset="utf-8">' in html
+
+
+def test_the_biggest_lesson_the_contract_allows_still_renders():
+    """40 steps is the cap. Worth one test, because a deck that is fine at three
+    slides and unusable at forty is a thing that ships."""
+    from app.microlesson.schema import MAX_STEPS
+
+    lesson = make_lesson(steps=[
+        LessonStep(index=i, title=f"Step {i}", bullets=[f"Point {i}"], notes=f"Note {i}")
+        for i in range(1, MAX_STEPS + 1)
+    ])
+    html = html_of(lesson)
+    assert html.count('class="slide"') == MAX_STEPS
