@@ -132,7 +132,11 @@ def test_session_time_is_built_as_a_cmi_timespan():
     """SCORM 1.2 wants HHHH:MM:SS with at least two hour digits. A malformed value is
     rejected wholesale, so the session silently reports nothing."""
     source = reporter_code()
-    assert "pad(h)" in source and "pad(m)" in source and "pad(sec)" in source
+    # Split rather than chained, so a failure names the component that is unpadded
+    # instead of reporting that the conjunction as a whole was false.
+    assert "pad(h)" in source
+    assert "pad(m)" in source
+    assert "pad(sec)" in source
 
 
 def test_a_finished_lesson_is_never_reopened_as_incomplete():
@@ -186,7 +190,9 @@ def test_a_lesson_with_nothing_to_show_is_refused():
 
 def test_the_same_lesson_emits_byte_identical_packages():
     lesson = make_lesson()
-    assert emit_scorm(lesson).content == emit_scorm(lesson).content
+    first = emit_scorm(lesson).content
+    second = emit_scorm(lesson).content
+    assert first == second
 
 
 def test_the_filename_marks_it_as_the_scorm_one():

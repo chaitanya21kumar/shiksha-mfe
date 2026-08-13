@@ -272,7 +272,11 @@ def test_the_keyword_sidebar_is_switched_off():
 def test_the_same_lesson_emits_byte_identical_packages():
     """Deterministic subcontent ids and fixed timestamps make the artefact testable."""
     lesson = make_lesson()
-    assert emit_h5p(lesson).content == emit_h5p(lesson).content
+    # Two independent emissions, named rather than compared inline, so the assertion
+    # reads as "these two runs agreed" and a failure prints which bytes differ.
+    first = emit_h5p(lesson).content
+    second = emit_h5p(lesson).content
+    assert first == second
 
 
 def test_two_elements_on_one_slide_have_different_subcontent_ids():

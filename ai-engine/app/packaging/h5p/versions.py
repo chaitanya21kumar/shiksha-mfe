@@ -82,16 +82,27 @@ CLOSURE: tuple[Library, ...] = (
 #: Verbatim from ``H5P.QuestionSet-1.20/semantics.json`` → ``questions.field.options``.
 #: A Question Set will only accept a child question whose ``library`` string is in
 #: this set, compared literally.
+#:
+#: **The overlap with the two whitelists below is deliberate and must stay
+#: duplicated.** Seven strings appear in all three, which is why the lines carrying
+#: them are marked: these are three separate transcriptions of three separately
+#: versioned upstream files, and their agreeing today is an observation rather than
+#: a rule. Hoisting a shared constant would mean that the day Course Presentation
+#: starts accepting a newer Multiple Choice, one edit silently rewrites what we
+#: believe Question Set and Interactive Video accept too — and these sets exist
+#: precisely to catch that mismatch, so a wrong one fails open. Deriving them from
+#: our own pins above would be worse still: the check would compare a version
+#: against itself and pass no matter what upstream permits.
 ALLOWED_QUESTION_LIBRARIES: frozenset[str] = frozenset(
     {
-        "H5P.MultiChoice 1.16",
-        "H5P.DragQuestion 1.14",
-        "H5P.Blanks 1.14",
-        "H5P.MarkTheWords 1.11",
-        "H5P.DragText 1.10",
-        "H5P.TrueFalse 1.8",
+        "H5P.MultiChoice 1.16",  # NOSONAR - transcription; see the note above
+        "H5P.DragQuestion 1.14",  # NOSONAR - transcription; see the note above
+        "H5P.Blanks 1.14",  # NOSONAR - transcription; see the note above
+        "H5P.MarkTheWords 1.11",  # NOSONAR - transcription; see the note above
+        "H5P.DragText 1.10",  # NOSONAR - transcription; see the note above
+        "H5P.TrueFalse 1.8",  # NOSONAR - transcription; see the note above
         "H5P.Essay 1.5",
-        "H5P.MultiMediaChoice 0.3",
+        "H5P.MultiMediaChoice 0.3",  # NOSONAR - transcription; see the note above
     }
 )
 

@@ -147,7 +147,9 @@ def test_a_lesson_with_nothing_to_show_is_refused():
 
 def test_the_same_lesson_renders_identically_twice():
     lesson = make_lesson()
-    assert emit_html5(lesson).content == emit_html5(lesson).content
+    first = emit_html5(lesson).content
+    second = emit_html5(lesson).content
+    assert first == second
 
 
 def test_the_filename_comes_from_the_title():
