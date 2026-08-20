@@ -329,3 +329,132 @@ def test_notes_that_are_only_whitespace_build_no_button():
     body = slides_of(lesson)[0]["elements"][1]
     assert "solution" not in body
     assert "alwaysDisplayComments" not in body
+
+
+# --- the title band, which used to cut headings in half ---------------------------
+#
+# An element's box is absolutely positioned with a fixed height and the runtime
+# clips whatever overflows it — it does not scroll and it does not shrink the type.
+# A single fixed title height therefore sliced any heading that wrapped, straight
+# through the glyphs, and a heading is the one thing on a slide nobody can miss.
+#
+# These assert the properties that make that impossible rather than restating the
+# constants back to themselves: a band that grows with the heading, a body that
+# never starts underneath it, and a bottom edge that does not move.
+
+
+def one_step(title: str, bullets: list[str] | None = None) -> MicroLesson:
+    return make_lesson(steps=[LessonStep(index=1, title=title, bullets=bullets or ["A point"], notes="")])
+
+
+def boxes(lesson: MicroLesson) -> tuple[dict, dict]:
+    """The title box and the body box of the first slide."""
+    elements = slides_of(lesson)[0]["elements"]
+    assert len(elements) == 2, "this helper wants a slide with both a heading and a body"
+    return elements[0], elements[1]
+
+
+SHORT_TITLE = "Evaporation"
+#: The heading from the report that started this: it wrapped to two lines and the
+#: second was cut through the middle.
+WRAPPED_TITLE = "The Water Cycle: How Water Moves Through Earth's Systems"
+#: 113 characters. Three lines by the emitter's wrap width, and three lines in the
+#: player too — this exact string was pasted into a running `H5P.AdvancedText` and
+#: measured, rather than being assumed from the character count. Word wrapping
+#: breaks earlier than a plain division does, which is the reason to check.
+THREE_LINE_TITLE = (
+    "The Water Cycle and Why It Matters: How Water Moves Between the Ocean, "
+    "the Atmosphere and the Land, Over and Over"
+)
+RUNAWAY_TITLE = "A heading so long that no reasonable slide could ever hold it, " + ("and on it goes " * 12)
+
+
+def test_a_heading_that_wraps_gets_a_taller_band_than_one_that_does_not():
+    short, _ = boxes(one_step(SHORT_TITLE))
+    wrapped, _ = boxes(one_step(WRAPPED_TITLE))
+    assert wrapped["height"] > short["height"]
+
+
+#: What the shipped `H5P.CoursePresentation-1.26` player does with an `h2`, read out
+#: of a running instance with the developer tools: one line box is this much of the
+#: slide's height, and the heading carries this much margin beneath it. Both are
+#: ratios of the slide, and the player scales type with the slide, so they do not
+#: move with the viewport.
+#:
+#: These live here rather than being imported from the emitter on purpose. A test
+#: that checks the band against the emitter's own idea of a line height agrees with
+#: it however wrong it is — the first version did exactly that, and passed against a
+#: line height of 8.0 that clipped a three-line heading in the real player.
+MEASURED_LINE_BOX_PCT = 9.26
+MEASURED_HEADING_MARGIN_PCT = 3.09
+
+
+def test_the_band_is_tall_enough_for_every_line_the_heading_wraps_to():
+    """The bug itself, checked against the player rather than against ourselves."""
+    # The runaway heading is deliberately absent: past the cap it *is* clipped, on
+    # purpose, and that trade is asserted by its own test below.
+    for title, lines in ((SHORT_TITLE, 1), (WRAPPED_TITLE, 2), (THREE_LINE_TITLE, 3)):
+        band, _ = boxes(one_step(title))
+        needed = lines * MEASURED_LINE_BOX_PCT + MEASURED_HEADING_MARGIN_PCT
+        assert band["height"] >= needed, (
+            f"{title[:40]!r}… wraps to {lines} lines needing {needed:.2f}% "
+            f"and is given {band['height']}% — the player will clip it"
+        )
+
+
+def test_the_body_never_starts_underneath_the_heading():
+    for title in (SHORT_TITLE, WRAPPED_TITLE, RUNAWAY_TITLE):
+        band, body = boxes(one_step(title))
+        assert body["y"] > band["y"] + band["height"], f"{title!r} has its points printed over its heading"
+
+
+def test_the_body_ends_in_the_same_place_whatever_the_heading():
+    """A taller heading takes room from the points, rather than pushing them off the
+    bottom edge of the slide where the runtime would clip them instead."""
+    bottoms = {
+        round(body["y"] + body["height"], 6)
+        for body in (boxes(one_step(t))[1] for t in (SHORT_TITLE, WRAPPED_TITLE, RUNAWAY_TITLE))
+    }
+    assert len(bottoms) == 1, f"the body's bottom edge moves: {sorted(bottoms)}"
+
+
+def test_a_runaway_heading_cannot_eat_the_slide():
+    """Past a few lines a heading stops being a heading. Clipping a word of it is
+    the better failure: the points below it stay readable."""
+    band, body = boxes(one_step(RUNAWAY_TITLE))
+    assert band["height"] <= 40
+    assert body["height"] >= 45
+
+
+def test_escaping_does_not_inflate_the_band():
+    """`Q&A` reaches the package as `Q&amp;A` — four characters longer, and still
+    three on screen. Sizing the band off the escaped markup would leave a fat empty
+    band above every heading carrying an ampersand or a quote.
+
+    Both fixtures are chosen to straddle the wrap width: 34 raw characters is one
+    line, and the 50 it escapes to is two. A first version of this test used a
+    heading that stayed on one line either way, so it passed whichever length the
+    band was measured from — it was found by the mutation surviving it.
+    """
+    plain, _ = boxes(one_step("Questions and answers about it"))
+    escaped, _ = boxes(one_step("Q&A: acids & bases & salts & water"))
+    assert plain["height"] == escaped["height"]
+
+
+def test_a_slide_with_no_heading_gives_the_whole_area_to_its_points():
+    """A title of only whitespace passes the contract and arrives here as an empty
+    heading. Reserving a band for it would leave a strip of blank slide on top."""
+    (body,) = slides_of(one_step("   "))[0]["elements"]
+    _, with_heading = boxes(one_step(SHORT_TITLE))
+    assert body["y"] < with_heading["y"]
+    assert body["height"] > with_heading["height"]
+    assert round(body["y"] + body["height"], 6) == round(with_heading["y"] + with_heading["height"], 6)
+
+
+def test_the_objectives_slide_is_laid_out_by_the_same_rules():
+    """It builds its own heading rather than taking one from the lesson, and an
+    earlier version of this fix left it on the old fixed geometry."""
+    band, body = boxes(make_lesson(objectives=["Explain the cycle"]))
+    _, step_body = boxes(one_step(SHORT_TITLE))
+    assert body["y"] > band["y"] + band["height"]
+    assert round(body["y"] + body["height"], 6) == round(step_body["y"] + step_body["height"], 6)

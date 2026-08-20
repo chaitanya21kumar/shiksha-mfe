@@ -83,10 +83,71 @@ from .errors import EmptyLessonError
 #: scattered through the builder.
 _MARGIN_X = 6.0
 _TITLE_TOP = 7.0
-_TITLE_HEIGHT = 14.0
-_BODY_TOP = 25.0
-_BODY_HEIGHT = 66.0
+_BODY_BOTTOM = 91.0
+_GAP = 4.0
 _WIDTH = 100.0 - (2 * _MARGIN_X)
+
+#: An element's box is absolutely positioned and its height is fixed, so anything
+#: taller than the box is **clipped** — not scrolled, not shrunk. A one-size title
+#: band therefore cuts long headings in half, and a heading is exactly the text a
+#: viewer notices. Seen in a real player: a fifty-six character title rendered its
+#: second line through the middle of the glyphs.
+#:
+#: So the band is sized to the heading instead. Both numbers below were measured
+#: in the shipped `H5P.CoursePresentation-1.26` player rather than estimated — an
+#: estimate of 8.0 for the line height looked right, left a two-line heading with
+#: two pixels to spare, and still clipped a three-line one.
+#:
+#: A rendered `h2` line box is 9.26% of the slide's height and the heading carries
+#: 3.09% of margin beneath it. Both are ratios of the slide, and Course
+#: Presentation scales type with the slide, so they hold at any viewport.
+_TITLE_LINE_HEIGHT = 9.5
+
+#: Deliberately below the ~52 characters an `h2` actually fits, because that count
+#: was measured on ordinary lowercase English. A heading in capitals, or in a
+#: script with wider glyphs, wraps earlier. Under-estimating the wrap width only
+#: ever buys a band one line taller than it needed; over-estimating it puts the
+#: clipping straight back.
+_TITLE_CHARS_PER_LINE = 44
+
+#: One line still gets a generous band: 12.35% is all it strictly needs, and a
+#: short heading sitting tight against its own box looks cramped even when nothing
+#: is cut.
+_TITLE_ONE_LINE = 14.0
+
+#: Three lines is where a heading stops being a heading. The contract puts no
+#: upper bound on a title — only `min_length=1` — so without a ceiling here a
+#: runaway heading would grow its band until the body had no room left. Past three
+#: lines the band stops growing, which trades a clipped word in the heading for a
+#: body that can still be read. Clipping the least important thing on the slide is
+#: the better of the two failures.
+_TITLE_MAX_LINES = 3
+
+
+def _title_height(text: str) -> float:
+    """How much of the slide a heading needs, in percent.
+
+    Rounded up from the wrap width: a heading that spills one character onto a
+    second line needs the whole second line.
+
+    Measured on the *raw* text, deliberately — not on the escaped markup. A
+    heading of `Q&A` escapes to `Q&amp;A`, four characters longer, but a browser
+    still lays out three. Counting the escaped form would over-size the band for
+    exactly the headings that carry an ampersand or a quote.
+    """
+    lines = max(1, min(_TITLE_MAX_LINES, -(-len(text.strip()) // _TITLE_CHARS_PER_LINE)))
+    return _TITLE_ONE_LINE + (lines - 1) * _TITLE_LINE_HEIGHT
+
+
+def _body_box(title_height: float) -> tuple[float, float]:
+    """Where the body starts and how tall it is, given the band above it.
+
+    The body always ends at the same place, so slides with a long heading lose
+    body room rather than pushing content off the bottom of the slide.
+    """
+    top = _TITLE_TOP + title_height + _GAP
+    return top, _BODY_BOTTOM - top
+
 
 #: What H5P shows for a child in an editor. No runtime behaviour, but every real
 #: package sets it, and a package that omits it looks machine-made in a way that
@@ -183,7 +244,10 @@ def _objectives_slide(lesson: MicroLesson) -> dict[str, object] | None:
     body = _bullet_list(lesson.objectives)
     if not body:
         return None
-    heading = escape_text("What you will be able to do")
+    text = "What you will be able to do"
+    heading = escape_text(text)
+    title_height = _title_height(text)
+    body_top, body_height = _body_box(title_height)
     return _slide(
         [
             _text_element(
@@ -192,15 +256,15 @@ def _objectives_slide(lesson: MicroLesson) -> dict[str, object] | None:
                 element_id="objectives-title",
                 label="Objectives",
                 y=_TITLE_TOP,
-                height=_TITLE_HEIGHT,
+                height=title_height,
             ),
             _text_element(
                 html=body,
                 lesson_id=lesson.lesson_id,
                 element_id="objectives-body",
                 label="Objectives",
-                y=_BODY_TOP,
-                height=_BODY_HEIGHT,
+                y=body_top,
+                height=body_height,
             ),
         ]
     )
@@ -216,10 +280,20 @@ def _step_slide(lesson: MicroLesson, step_index: int) -> dict[str, object] | Non
     imports fine and confuses whoever opens it.
     """
     step = lesson.steps[step_index]
-    heading = escape_text(step.title.strip())
+    title = step.title.strip()
+    heading = escape_text(title)
     body = _bullet_list(step.bullets)
     if not heading and not body:
         return None
+
+    # A slide with no heading gives the whole area to the points, rather than
+    # leaving a band of blank slide where a heading would have been.
+    if heading:
+        title_height = _title_height(title)
+        body_top, body_height = _body_box(title_height)
+    else:
+        title_height = 0.0
+        body_top, body_height = _TITLE_TOP, _BODY_BOTTOM - _TITLE_TOP
 
     elements: list[dict[str, object]] = []
     if heading:
@@ -230,7 +304,7 @@ def _step_slide(lesson: MicroLesson, step_index: int) -> dict[str, object] | Non
                 element_id=f"step-{step.index}-title",
                 label=f"Step {step.index}",
                 y=_TITLE_TOP,
-                height=_TITLE_HEIGHT,
+                height=title_height,
             )
         )
     if body:
@@ -240,8 +314,8 @@ def _step_slide(lesson: MicroLesson, step_index: int) -> dict[str, object] | Non
                 lesson_id=lesson.lesson_id,
                 element_id=f"step-{step.index}-body",
                 label=f"Step {step.index}",
-                y=_BODY_TOP,
-                height=_BODY_HEIGHT,
+                y=body_top,
+                height=body_height,
                 # The teacher's spoken notes, as the element's Comments. See the
                 # module docstring for why this field and what it costs.
                 comment=escape_text(step.notes.strip()),
