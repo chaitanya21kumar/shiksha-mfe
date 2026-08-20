@@ -36,6 +36,12 @@ from ..summarization.schema import DocumentInsights
 #: a fourth.
 CourseSourceKind = Literal["document", "transcript", "text"]
 
+#: The default mix when a caller does not name question types. Three objective types
+#: rather than all four: short answer is the slowest to generate and the one most
+#: likely to find nothing groundable, and a default should be the fast, reliable
+#: path. A caller who wants it asks for it.
+DEFAULT_QUESTION_TYPES = ("mcq", "fill_blank", "match")
+
 
 class Stage(str, Enum):
     """The stages a build runs, in the order they run.
@@ -147,3 +153,34 @@ class Course(BaseModel):
         assessment in is complete without one.
         """
         return not any(r.outcome is StageOutcome.FAILED for r in self.stages)
+
+
+class CourseOptions(BaseModel):
+    """Everything a caller can choose about a build, in one object.
+
+    Gathered rather than passed as sixteen keyword arguments. A signature that long
+    is one a caller gets subtly wrong — two adjacent booleans are impossible to read
+    at a call site — and every new knob would widen it further. As one object the
+    defaults live in a single place, the routes and the pipeline cannot drift about
+    what a default is, and the whole thing is printable when a build misbehaves.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    title: str | None = None
+    language: str = "en"
+
+    #: Which stages to attempt. A stage turned off here reports `skipped`, never
+    #: `failed` — the distinction the whole contract rests on.
+    with_insights: bool = True
+    with_narration: bool = False
+    with_lesson: bool = True
+    with_assessment: bool = True
+
+    question_types: list[str] = Field(
+        default_factory=lambda: list(DEFAULT_QUESTION_TYPES)
+    )
+    question_count: int = Field(default=5, ge=1, le=20)
+    pass_percentage: int = Field(default=60, ge=0, le=100)
+    solution_visibility: str = "always"
+    time_limit_seconds: int | None = Field(default=None, ge=1)

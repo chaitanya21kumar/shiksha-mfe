@@ -35,16 +35,24 @@ from ..microlesson.pipeline import (
 )
 from ..narration.pipeline import generate_narration
 from ..summarization.pipeline import generate_insights
-from .schema import Course, CourseSource, Stage, StageOutcome, StageReport
+from .schema import (
+    DEFAULT_QUESTION_TYPES,
+    Course,
+    CourseOptions,
+    CourseSource,
+    Stage,
+    StageOutcome,
+    StageReport,
+)
+
+__all__ = ["DEFAULT_QUESTION_TYPES", "build_course"]
 
 logger = logging.getLogger("ai_engine.course")
 
-#: The default mix when a caller does not name question types. Three objective types
-#: rather than all four: short answer is the slowest to generate and the one most
-#: likely to find nothing groundable, and a default should be the fast, reliable
-#: path. A caller who wants it asks for it.
-DEFAULT_QUESTION_TYPES = ("mcq", "fill_blank", "match")
-
+#: The reason a stage did not run when the caller simply did not ask for it. One
+#: spelling, because a caller matching on this string should not have to guess which
+#: of four near-identical sentences a given stage produces.
+NOT_REQUESTED = "not requested"
 
 class _Recorder:
     """Collects one `StageReport` per stage, in run order."""
@@ -111,17 +119,7 @@ async def build_course(
     document: ParsedDocument | None = None,
     chaptered=None,
     text: str = "",
-    title: str | None = None,
-    language: str = "en",
-    with_insights: bool = True,
-    with_narration: bool = False,
-    with_lesson: bool = True,
-    with_assessment: bool = True,
-    question_types: tuple[str, ...] | list[str] = DEFAULT_QUESTION_TYPES,
-    question_count: int = 5,
-    pass_percentage: int = 60,
-    solution_visibility: str = "always",
-    time_limit_seconds: int | None = None,
+    options: CourseOptions | None = None,
 ) -> Course:
     """Build one course from one source, running every stage that was asked for.
 
@@ -134,6 +132,7 @@ async def build_course(
     one on failure, since the cheapest and most reliable stages finish first and a
     caller watching a slow build sees results accumulate rather than nothing at all.
     """
+    options = options or CourseOptions()
     given = [name for name, value in
              (("document", document), ("chaptered", chaptered), ("text", text.strip()))
              if value]
@@ -152,52 +151,52 @@ async def build_course(
 
     insights = await _stage(
         recorder, Stage.INSIGHTS,
-        with_insights and doc_only,
-        "not requested" if not with_insights else "only a parsed document can be summarised",
+        options.with_insights and doc_only,
+        NOT_REQUESTED if not options.with_insights else "only a parsed document can be summarised",
         lambda: generate_insights(client, document, config),
     )
 
     narration = await _stage(
         recorder, Stage.NARRATION,
-        with_narration and doc_only,
-        "not requested" if not with_narration else "only a parsed document can be narrated",
+        options.with_narration and doc_only,
+        NOT_REQUESTED if not options.with_narration else "only a parsed document can be narrated",
         lambda: generate_narration(client, document, config),
     )
 
     async def _lesson():
         if document is not None:
             return await lesson_from_document(
-                client, document, config, title=title, language=language
+                client, document, config, title=options.title, language=options.language
             )
         if chaptered is not None:
             return await lesson_from_transcript(
-                client, chaptered, config, title=title, language=language
+                client, chaptered, config, title=options.title, language=options.language
             )
-        return await lesson_from_text(client, text, config, title=title, language=language)
+        return await lesson_from_text(client, text, config, title=options.title, language=options.language)
 
     lesson = await _stage(
-        recorder, Stage.LESSON, with_lesson, "not requested", _lesson
+        recorder, Stage.LESSON, options.with_lesson, NOT_REQUESTED, _lesson
     )
 
     assessment = await _stage(
         recorder, Stage.ASSESSMENT,
-        with_assessment and doc_only,
-        "not requested" if not with_assessment else "questions are grounded in a parsed document",
+        options.with_assessment and doc_only,
+        NOT_REQUESTED if not options.with_assessment else "questions are grounded in a parsed document",
         lambda: generate_assessment(
             client, document, config,
-            question_types=list(question_types),
-            count=question_count,
-            language=language,
-            pass_percentage=pass_percentage,
-            solution_visibility=solution_visibility,
-            time_limit_seconds=time_limit_seconds,
+            question_types=list(options.question_types),
+            count=options.question_count,
+            language=options.language,
+            pass_percentage=options.pass_percentage,
+            solution_visibility=options.solution_visibility,
+            time_limit_seconds=options.time_limit_seconds,
         ),
     )
 
     return Course(
         course_id=_course_id(document, chaptered, text),
-        title=_title(title, lesson, insights, document),
-        language=language,
+        title=_title(options.title, lesson, insights, document),
+        language=options.language,
         source=_source(document, chaptered, text, lesson),
         generator=getattr(config, "provider", "") or "unknown",
         model=getattr(config, "model", "") or "unknown",

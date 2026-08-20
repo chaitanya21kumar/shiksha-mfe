@@ -18,7 +18,7 @@ from datetime import datetime, timezone
 import pytest
 
 from app.course import pipeline as P
-from app.course.schema import Stage, StageOutcome
+from app.course.schema import CourseOptions, Stage, StageOutcome
 from app.ingestion.schema import Block, BlockKind, Page, ParsedDocument, SourceInfo
 from app.microlesson.schema import LessonStep, MicroLesson
 from app.narration.schema import NarrationScript, NarrationSource
@@ -96,8 +96,14 @@ def all_good(monkeypatch):
 
 def build(**kwargs):
     """Run a build the way the rest of this suite runs async code: no plugin, just
-    `asyncio.run`, so the tests stay readable and the dependency list stays short."""
-    return asyncio.run(P.build_course(None, Config(), **kwargs))
+    `asyncio.run`, so the tests stay readable and the dependency list stays short.
+
+    Anything that is not a source is an option, so a test names only the knob it
+    cares about and the defaults stay in one place.
+    """
+    sources = {k: kwargs.pop(k) for k in ("document", "chaptered", "text") if k in kwargs}
+    options = CourseOptions(**kwargs) if kwargs else None
+    return asyncio.run(P.build_course(None, Config(), options=options, **sources))
 
 
 def report(course, stage: Stage):
@@ -150,9 +156,10 @@ def test_cancellation_still_stops_the_build(monkeypatch):
     as a stage that politely failed."""
     all_good(monkeypatch)
     stub(monkeypatch, "lesson_from_document", raises=KeyboardInterrupt())
+    document = make_document()
 
     with pytest.raises(KeyboardInterrupt):
-        build(document=make_document())
+        build(document=document)
 
 
 # --- absence must never be confused with failure ---------------------------------
@@ -206,8 +213,7 @@ def test_produced_lists_only_what_is_really_on_the_course(monkeypatch):
 def test_text_cannot_be_summarised_and_says_so_structurally(monkeypatch):
     """"Not requested" would tell a teacher they had a choice they do not have."""
     stub(monkeypatch, "lesson_from_text", result=make_lesson())
-    course = build(text="Some notes.", with_insights=True, with_assessment=True
-    )
+    course = build(text="Some notes.", with_insights=True, with_assessment=True)
     assert report(course, Stage.INSIGHTS).outcome is StageOutcome.SKIPPED
     assert "parsed document" in report(course, Stage.INSIGHTS).detail
     assert "parsed document" in report(course, Stage.ASSESSMENT).detail
@@ -215,8 +221,9 @@ def test_text_cannot_be_summarised_and_says_so_structurally(monkeypatch):
 
 def test_exactly_one_source_is_required(monkeypatch):
     all_good(monkeypatch)
+    document = make_document()
     with pytest.raises(ValueError):
-        build(document=make_document(), text="also this")
+        build(document=document, text="also this")
 
 
 def test_no_source_at_all_is_refused(monkeypatch):
@@ -289,7 +296,8 @@ def test_a_text_course_still_gets_a_stable_id(monkeypatch):
     stub(monkeypatch, "lesson_from_text", result=make_lesson())
     first = build(text="The water cycle.").course_id
     second = build(text="The water cycle.").course_id
-    assert first == second and first.startswith("course-")
+    assert first == second
+    assert first.startswith("course-")
 
 
 def test_a_course_falls_back_to_a_plain_title_when_nothing_names_it(monkeypatch):

@@ -44,6 +44,19 @@ _FIXED_TIMESTAMP = (1980, 1, 1, 0, 0, 0)
 MANIFEST_NAME = "manifest.json"
 README_NAME = "README.txt"
 
+#: Every path this module writes, named once. These are our own filenames, not a
+#: transcription of anyone else's, so one definition is the right number: the README
+#: describes them by the same names it writes, and the two cannot drift.
+INSIGHTS_JSON = "insights.json"
+NARRATION_JSON = "narration.json"
+LESSON_JSON = "lesson.json"
+ASSESSMENT_JSON = "assessment.json"
+LESSON_H5P = "lesson/lesson.h5p"
+LESSON_HTML = "lesson/lesson.html"
+LESSON_SCORM = "lesson/lesson-scorm.zip"
+QUIZ_H5P = "quiz/quiz.h5p"
+QUIZ_SCORM = "quiz/quiz-scorm.zip"
+
 
 class CourseBundle(NamedTuple):
     """The archive, what to call it, what packaging managed, and what to flag.
@@ -105,42 +118,26 @@ def build_bundle(course: Course) -> CourseBundle:
         (written if _try(files, name, emit) else failed).append(name)
 
     # --- the readable artefacts, always first in the archive ---------------------
-    if course.insights is not None:
-        files["insights.json"] = _json_bytes(course.insights)
-        written.append("insights.json")
-    if course.narration is not None:
-        files["narration.json"] = _json_bytes(course.narration)
-        written.append("narration.json")
-    if course.lesson is not None:
-        files["lesson.json"] = _json_bytes(course.lesson)
-        written.append("lesson.json")
-    if course.assessment is not None:
-        files["assessment.json"] = _json_bytes(course.assessment)
-        written.append("assessment.json")
+    for name, artefact in (
+        (INSIGHTS_JSON, course.insights),
+        (NARRATION_JSON, course.narration),
+        (LESSON_JSON, course.lesson),
+        (ASSESSMENT_JSON, course.assessment),
+    ):
+        if artefact is not None:
+            files[name] = _json_bytes(artefact)
+            written.append(name)
 
     # --- the packages an LMS opens ------------------------------------------------
     if course.lesson is not None:
-        record("lesson/lesson.h5p", lambda: emit_lesson_h5p(course.lesson).content)
-        record("lesson/lesson.html", lambda: emit_lesson_html5(course.lesson).content)
-        record("lesson/lesson-scorm.zip", lambda: emit_lesson_scorm(course.lesson).content)
+        record(LESSON_H5P, lambda: emit_lesson_h5p(course.lesson).content)
+        record(LESSON_HTML, lambda: emit_lesson_html5(course.lesson).content)
+        record(LESSON_SCORM, lambda: emit_lesson_scorm(course.lesson).content)
     if course.assessment is not None:
-        record("quiz/quiz.h5p", lambda: emit_quiz_h5p(course.assessment).content)
-        record("quiz/quiz-scorm.zip", lambda: emit_quiz_scorm(course.assessment).content)
+        record(QUIZ_H5P, lambda: emit_quiz_h5p(course.assessment).content)
+        record(QUIZ_SCORM, lambda: emit_quiz_scorm(course.assessment).content)
 
-    outcome = StageOutcome.PRODUCED if written else StageOutcome.SKIPPED
-    detail = ""
-    if failed:
-        outcome = StageOutcome.FAILED if not written else StageOutcome.PRODUCED
-        detail = "Could not package: " + ", ".join(failed)
-    elif not written:
-        detail = "nothing was generated to package"
-
-    report = StageReport(
-        stage=Stage.PACKAGING,
-        outcome=outcome,
-        detail=detail,
-        artefacts=sorted(written),
-    )
+    report = _packaging_report(written, failed)
 
     files[MANIFEST_NAME] = _json_bytes(_manifest(course, report))
     files[README_NAME] = _readme(course, report).encode("utf-8")
@@ -161,6 +158,32 @@ def build_bundle(course: Course) -> CourseBundle:
         if r.outcome is StageOutcome.FAILED:
             warnings.append(f"{r.stage.value}: {r.detail}")
     return CourseBundle(buffer.getvalue(), f"{stem}-course.zip", report, warnings)
+
+
+def _packaging_report(written: list[str], failed: list[str]) -> StageReport:
+    """How packaging went, in the three outcomes the rest of the contract uses.
+
+    Producing *something* while failing something else stays `produced`, with the
+    failures named: a caller who got four of five packages did not have packaging
+    fail, and calling it failed would make the course look unusable when it is not.
+
+    There is deliberately no `failed` outcome here, and that is a property of the
+    order things are written rather than an oversight. Packages are only attempted
+    when a lesson or an assessment exists, and either of those has already written
+    its `.json` by then — so `failed` can never be non-empty while `written` is
+    empty. A branch for that state would be unreachable, and unreachable code that
+    looks defensive is worse than none: it can never be tested, so it can never be
+    known to be right.
+    """
+    if failed:
+        outcome, detail = StageOutcome.PRODUCED, "Could not package: " + ", ".join(sorted(failed))
+    elif written:
+        outcome, detail = StageOutcome.PRODUCED, ""
+    else:
+        outcome, detail = StageOutcome.SKIPPED, "nothing was generated to package"
+    return StageReport(
+        stage=Stage.PACKAGING, outcome=outcome, detail=detail, artefacts=sorted(written)
+    )
 
 
 def _manifest(course: Course, packaging: StageReport) -> dict[str, object]:
@@ -196,15 +219,15 @@ def _readme(course: Course, packaging: StageReport) -> str:
         "",
     ]
     what = {
-        "lesson/lesson.h5p": "The lesson as an H5P Course Presentation. Upload it to Moodle or Sunbird.",
-        "lesson/lesson.html": "The same lesson as one self-contained web page. Needs no LMS and no internet.",
-        "lesson/lesson-scorm.zip": "The same lesson as a SCORM 1.2 course. Reports completion to a gradebook.",
-        "quiz/quiz.h5p": "The questions as an H5P Question Set. Marks itself in the browser.",
-        "quiz/quiz-scorm.zip": "The questions as a SCORM 1.2 course. Reports the score to a gradebook.",
-        "lesson.json": "The lesson in plain data, if you want to edit it before packaging again.",
-        "assessment.json": "The questions in plain data, each traceable to the source it came from.",
-        "insights.json": "Summary, glossary and outline of the source document.",
-        "narration.json": "A narration script for the document. Text only, not audio.",
+        LESSON_H5P: "The lesson as an H5P Course Presentation. Upload it to Moodle or Sunbird.",
+        LESSON_HTML: "The same lesson as one self-contained web page. Needs no LMS and no internet.",
+        LESSON_SCORM: "The same lesson as a SCORM 1.2 course. Reports completion to a gradebook.",
+        QUIZ_H5P: "The questions as an H5P Question Set. Marks itself in the browser.",
+        QUIZ_SCORM: "The questions as a SCORM 1.2 course. Reports the score to a gradebook.",
+        LESSON_JSON: "The lesson in plain data, if you want to edit it before packaging again.",
+        ASSESSMENT_JSON: "The questions in plain data, each traceable to the source it came from.",
+        INSIGHTS_JSON: "Summary, glossary and outline of the source document.",
+        NARRATION_JSON: "A narration script for the document. Text only, not audio.",
     }
     for name in packaging.artefacts:
         lines.append(f"  {name}")

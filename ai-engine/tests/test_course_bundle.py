@@ -169,7 +169,11 @@ def test_the_same_course_bundles_to_the_same_bytes():
     breakages survived this assertion. The two below pin the mechanisms instead.
     """
     course = make_course()
-    assert build_bundle(course).content == build_bundle(course).content
+    # Named rather than compared inline: two independent builds, so a failure prints
+    # which bytes differ instead of reading as an expression compared with itself.
+    first = build_bundle(course).content
+    second = build_bundle(course).content
+    assert first == second
 
 
 def test_the_archive_is_ordered_by_name_not_by_insertion():

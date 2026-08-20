@@ -30,8 +30,8 @@ from ..packaging.response import ZIP_MEDIA_TYPE, package_response
 from ..summarization.pipeline import generation_config
 from ..summarization.router import get_llm_client
 from .bundle import build_bundle
-from .pipeline import DEFAULT_QUESTION_TYPES, build_course
-from .schema import Course
+from .pipeline import build_course
+from .schema import Course, CourseOptions
 
 router = APIRouter(tags=["course"])
 
@@ -56,17 +56,21 @@ _VISIBILITY = Query(description="When a learner may see the answers.")
 _TIMER = Query(ge=1, description="Time limit for the whole quiz, in seconds. Omit for none.")
 
 
-async def _build(
-    client, *, document=None, text="", title, language, with_insights, with_narration,
-    with_lesson, with_assessment, question_types, count, pass_percentage,
-    solution_visibility, time_limit_seconds,
-) -> Course:
-    return await build_course(
-        client, generation_config(),
-        document=document, text=text, title=title, language=language,
-        with_insights=with_insights, with_narration=with_narration,
-        with_lesson=with_lesson, with_assessment=with_assessment,
-        question_types=question_types or list(DEFAULT_QUESTION_TYPES),
+def _options(
+    *, title, language, insights, narration, lesson, assessment,
+    question_types, count, pass_percentage, solution_visibility, time_limit_seconds,
+) -> CourseOptions:
+    """Gather the query parameters into the object the pipeline takes.
+
+    The routes still spell every knob out, because that is what makes them legible in
+    the interactive documentation — a single opaque body would hide the choices from
+    the one place a caller goes looking for them.
+    """
+    return CourseOptions(
+        title=title, language=language,
+        with_insights=insights, with_narration=narration,
+        with_lesson=lesson, with_assessment=assessment,
+        question_types=question_types or list(CourseOptions.model_fields["question_types"].default_factory()),
         question_count=count, pass_percentage=pass_percentage,
         solution_visibility=solution_visibility, time_limit_seconds=time_limit_seconds,
     )
@@ -90,12 +94,14 @@ async def course_from_file(
 ) -> Course:
     """Turn one upload into a whole course, and report on every stage."""
     document = await parse_upload(file)
-    return await _build(
-        client, document=document, title=title, language=language,
-        with_insights=insights, with_narration=narration, with_lesson=lesson,
-        with_assessment=assessment, question_types=question_types, count=count,
-        pass_percentage=pass_percentage, solution_visibility=solution_visibility,
-        time_limit_seconds=time_limit_seconds,
+    return await build_course(
+        client, generation_config(), document=document,
+        options=_options(
+            title=title, language=language, insights=insights, narration=narration,
+            lesson=lesson, assessment=assessment, question_types=question_types,
+            count=count, pass_percentage=pass_percentage,
+            solution_visibility=solution_visibility, time_limit_seconds=time_limit_seconds,
+        ),
     )
 
 
@@ -116,11 +122,13 @@ async def course_from_text(
     # pipeline then reports the structural reason — "only a parsed document can be
     # summarised" — instead of "not requested", which would tell a teacher they had
     # a choice they do not have.
-    return await _build(
-        client, text=text, title=title, language=language,
-        with_insights=True, with_narration=True, with_lesson=True,
-        with_assessment=True, question_types=None, count=5, pass_percentage=60,
-        solution_visibility="always", time_limit_seconds=None,
+    return await build_course(
+        client, generation_config(), text=text,
+        options=CourseOptions(
+            title=title, language=language,
+            with_insights=True, with_narration=True,
+            with_lesson=True, with_assessment=True,
+        ),
     )
 
 
@@ -147,12 +155,14 @@ async def course_bundle_from_file(
 ) -> Response:
     """Upload a file, get the finished course back as one archive."""
     document = await parse_upload(file)
-    course = await _build(
-        client, document=document, title=title, language=language,
-        with_insights=insights, with_narration=narration, with_lesson=lesson,
-        with_assessment=assessment, question_types=question_types, count=count,
-        pass_percentage=pass_percentage, solution_visibility=solution_visibility,
-        time_limit_seconds=time_limit_seconds,
+    course = await build_course(
+        client, generation_config(), document=document,
+        options=_options(
+            title=title, language=language, insights=insights, narration=narration,
+            lesson=lesson, assessment=assessment, question_types=question_types,
+            count=count, pass_percentage=pass_percentage,
+            solution_visibility=solution_visibility, time_limit_seconds=time_limit_seconds,
+        ),
     )
     return package_response(build_bundle(course))
 

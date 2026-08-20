@@ -74,7 +74,8 @@ def test_the_stage_report_is_always_present_in_the_body(monkeypatch):
     stub_build(monkeypatch, a_course())
     body = client.post("/course/text", content="x", headers={"Content-Type": "text/plain"}).json()
     assert body["stages"]
-    assert "is_complete" in body and "produced" in body
+    assert "is_complete" in body
+    assert "produced" in body
 
 
 def test_a_course_with_a_failed_stage_still_answers_200(monkeypatch):
@@ -129,7 +130,8 @@ def test_a_course_object_survives_the_round_trip():
     """The course carries computed fields, so a caller echoing back what we sent must
     not be rejected for it — the rule ADR-0011 records for the lesson."""
     sent = a_course().model_dump(mode="json")
-    assert "produced" in sent and "is_complete" in sent   # computed, and serialised
+    assert "produced" in sent          # computed, and serialised
+    assert "is_complete" in sent
     assert client.post("/course/bundle", json=sent).status_code == 200
 
 
