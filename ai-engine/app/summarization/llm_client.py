@@ -199,7 +199,46 @@ def _status_error(exc: httpx.HTTPStatusError) -> LLMError:
         )
     if code == 429:
         return LLMUnavailable("The model gateway is rate-limited (HTTP 429).")
+    # A model that the gateway no longer serves is a property of the *gateway*, not
+    # of our request, so it belongs with the key rejection above rather than with
+    # replies we could not use. Providers retire models on a published date —
+    # Groq withdrew `llama-3.1-8b-instant` on 16 August 2026 — and on that morning
+    # every call began returning 404 while the configured fallback sat unused,
+    # because this branch classified it as a bad response and the failover only
+    # catches `LLMUnavailable`. Retrying here cannot help and neither can waiting;
+    # the fallback can serve immediately, and the warning names the model so
+    # whoever reads the log knows a version needs re-pinning rather than restarting.
+    if _is_model_missing(code, body):
+        logger.warning(
+            "%s no longer serves the configured model; re-pin it. Gateway said: %s",
+            exc.request.url.host, body[:160],
+        )
+        return LLMUnavailable(
+            f"The model gateway no longer serves the configured model (HTTP {code}): {body[:200]}"
+        )
     return LLMBadResponse(f"The model gateway returned HTTP {code}: {body[:200]}")
+
+
+#: What a provider says when the model in the request is not one it serves. Matched
+#: on the body rather than on the status alone, because a bare 404 is far more often
+#: a mistyped base URL — and silently failing over on *that* would hide a typo behind
+#: a working fallback, which is the failure this whole change exists to prevent.
+_MODEL_MISSING_PHRASES = (
+    "does not exist",
+    "model not found",
+    "unknown model",
+    "is not a valid model",
+    "model_not_found",
+    "decommissioned",
+)
+
+
+def _is_model_missing(code: int, body: str) -> bool:
+    """True when the gateway is saying it does not serve the model we asked for."""
+    if code not in (400, 404):
+        return False
+    lowered = body.lower()
+    return any(phrase in lowered for phrase in _MODEL_MISSING_PHRASES)
 
 
 def _extract_content(response: httpx.Response) -> dict[str, Any]:
@@ -236,7 +275,8 @@ async def chat_json_for(
     The engine speaks one contract to every provider, which is what makes a second
     gateway three settings rather than a second code path. The failover is
     deliberately narrow: it triggers only on `LLMUnavailable` — a gateway that is
-    unreachable, refusing the key, or out of budget — and never on a timeout or on
+    unreachable, refusing the key, out of budget, or no longer serving the model we
+    are configured to use — and never on a timeout or on
     a reply we simply could not use, because retrying those elsewhere would hide a
     real fault behind a slower one.
 
