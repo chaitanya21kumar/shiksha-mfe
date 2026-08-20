@@ -55,11 +55,87 @@ async def lifespan(app: FastAPI):
         logger.info("Stopping %s", settings.app_name)
 
 
+#: Shown at the top of /docs. The interactive documentation is the first thing a
+#: reviewer, a mentor or a partner LMS team opens, and an endpoint list with no
+#: explanation makes thirty-three routes look like thirty-three unrelated features
+#: rather than one pipeline with four entry points into it.
+API_DESCRIPTION = """
+Turns a **document or a recording** into teaching material an LMS can open:
+a lesson, a quiz, subtitles and an interactive video — packaged as **H5P**,
+**SCORM 1.2** or a **standalone HTML file**.
+
+### How the pipeline fits together
+
+```
+a document ─┐
+a recording ─┼─→  understand  ─→  teach   ─→  check   ─→  package
+typed notes ─┘    (insights)      (lesson)    (quiz)      (H5P · SCORM · HTML)
+```
+
+Every module below is one step of that, and each is callable on its own.
+**`/course/…` runs all of them at once**, which is what most callers want.
+
+### Two rules that shape every response here
+
+**Nothing is invented.** Every question is grounded in a passage of the source and
+carries the reference back to it. Where a target format cannot express something,
+the engine says so in `warnings` rather than approximating it silently.
+
+**Structure is computed, never generated.** How many steps a lesson has, and where a
+recording's chapters fall, are decided in Python from the source itself. The model
+only writes the words inside a structure it was given — so the same input produces
+the same shape every time, which is what makes any of this testable.
+
+### Reading a course response
+
+A `200` from `/course/…` does **not** mean every stage succeeded. It means the build
+ran and reported. Check `stages`: each one is `produced`, `skipped` (you did not ask)
+or `failed` (you asked and it could not be done, with the reason). A document that
+supports no groundable question still returns its lesson.
+"""
+
+#: One line per module, shown above each group in /docs. Ordered as the pipeline
+#: runs rather than alphabetically, so the page reads top to bottom as the flow.
+API_TAGS = [
+    {"name": "course",
+     "description": "**Start here.** One upload, one finished course — every module "
+                    "below run in order, with a report on each. Returns either the "
+                    "course as data, or one archive ready to hand to an LMS."},
+    {"name": "ingestion",
+     "description": "Parse a file into structured pages and blocks. Seven formats: "
+                    "PDF, PPTX, DOCX, CSV, HTML, Markdown and plain text."},
+    {"name": "summarization",
+     "description": "A summary, a glossary and an outline of a parsed document."},
+    {"name": "narration",
+     "description": "A narration script a teacher could read aloud. Text only — this "
+                    "produces no audio."},
+    {"name": "assessment",
+     "description": "Questions grounded in the source, and their packages. Four types: "
+                    "multiple choice, fill in the blank, match the pairs, and short "
+                    "answer marked against a scheme built at generation time."},
+    {"name": "transcription",
+     "description": "Speech to a timed transcript, with WebVTT and SRT subtitles."},
+    {"name": "chaptering",
+     "description": "Split a recording at its own natural pauses. The model titles the "
+                    "chapters; it never decides where they fall."},
+    {"name": "interactive video",
+     "description": "A recording as an H5P Interactive Video, with a knowledge check at "
+                    "the end of each chapter."},
+    {"name": "micro-lesson",
+     "description": "A short structured lesson, and its three packaged forms: H5P Course "
+                    "Presentation, a self-contained HTML deck, and SCORM 1.2."},
+    {"name": "system",
+     "description": "Liveness, readiness and service metadata."},
+]
+
+
 def create_app() -> FastAPI:
     app = FastAPI(
         title=settings.app_name,
         version=settings.version,
         summary="Local-first, LMS-agnostic AI engine: documents and media into portable micro-learning.",
+        description=API_DESCRIPTION,
+        openapi_tags=API_TAGS,
         lifespan=lifespan,
     )
     # Populated on startup; these guards keep calls before lifespan runs from crashing.
