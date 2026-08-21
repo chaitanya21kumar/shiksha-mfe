@@ -31,6 +31,10 @@ BLANKS: Library = ("H5P.Blanks", 1, 14)
 DRAGTEXT: Library = ("H5P.DragText", 1, 10)
 ESSAY: Library = ("H5P.Essay", 1, 5)
 INTERACTIVE_VIDEO: Library = ("H5P.InteractiveVideo", 1, 27)
+COURSE_PRESENTATION: Library = ("H5P.CoursePresentation", 1, 26)
+#: The text element a slide carries. One field, ``text``, and no dependencies of
+#: its own — which is why a lesson made of prose pulls in nothing extra.
+ADVANCED_TEXT: Library = ("H5P.AdvancedText", 1, 1)
 
 # Shared dependencies, named for the same reason: every closure below is built
 # from these constants rather than re-spelling the tuples, so re-pinning a version
@@ -78,16 +82,27 @@ CLOSURE: tuple[Library, ...] = (
 #: Verbatim from ``H5P.QuestionSet-1.20/semantics.json`` → ``questions.field.options``.
 #: A Question Set will only accept a child question whose ``library`` string is in
 #: this set, compared literally.
+#:
+#: **The overlap with the two whitelists below is deliberate and must stay
+#: duplicated.** Seven strings appear in all three, which is why the lines carrying
+#: them are marked: these are three separate transcriptions of three separately
+#: versioned upstream files, and their agreeing today is an observation rather than
+#: a rule. Hoisting a shared constant would mean that the day Course Presentation
+#: starts accepting a newer Multiple Choice, one edit silently rewrites what we
+#: believe Question Set and Interactive Video accept too — and these sets exist
+#: precisely to catch that mismatch, so a wrong one fails open. Deriving them from
+#: our own pins above would be worse still: the check would compare a version
+#: against itself and pass no matter what upstream permits.
 ALLOWED_QUESTION_LIBRARIES: frozenset[str] = frozenset(
     {
-        "H5P.MultiChoice 1.16",
-        "H5P.DragQuestion 1.14",
-        "H5P.Blanks 1.14",
-        "H5P.MarkTheWords 1.11",
-        "H5P.DragText 1.10",
-        "H5P.TrueFalse 1.8",
+        "H5P.MultiChoice 1.16",  # NOSONAR - transcription; see the note above
+        "H5P.DragQuestion 1.14",  # NOSONAR - transcription; see the note above
+        "H5P.Blanks 1.14",  # NOSONAR - transcription; see the note above
+        "H5P.MarkTheWords 1.11",  # NOSONAR - transcription; see the note above
+        "H5P.DragText 1.10",  # NOSONAR - transcription; see the note above
+        "H5P.TrueFalse 1.8",  # NOSONAR - transcription; see the note above
         "H5P.Essay 1.5",
-        "H5P.MultiMediaChoice 0.3",
+        "H5P.MultiMediaChoice 0.3",  # NOSONAR - transcription; see the note above
     }
 )
 
@@ -172,3 +187,52 @@ def dependency(library: Library) -> dict[str, object]:
     """
     machine_name, major, minor = library
     return {"machineName": machine_name, "majorVersion": major, "minorVersion": minor}
+
+#: Verbatim from ``H5P.CoursePresentation-1.26/semantics.json`` →
+#: ``presentation.slides.field.elements.field.action.options``. A slide element's
+#: ``action.library`` is matched against this list literally, exactly as a Question
+#: Set matches its children and an Interactive Video matches its interactions.
+ALLOWED_SLIDE_ELEMENT_LIBRARIES: frozenset[str] = frozenset(
+    {
+        "H5P.AdvancedText 1.1",
+        "H5P.Link 1.3",
+        "H5P.Image 1.1",
+        "H5P.Shape 1.0",
+        "H5P.Video 1.6",
+        "H5P.Audio 1.5",
+        "H5P.Blanks 1.14",
+        "H5P.SingleChoiceSet 1.11",
+        "H5P.MultiChoice 1.16",
+        "H5P.TrueFalse 1.8",
+        "H5P.DragQuestion 1.14",
+        "H5P.Summary 1.10",
+        "H5P.DragText 1.10",
+        "H5P.MarkTheWords 1.11",
+        "H5P.Dialogcards 1.9",
+        "H5P.ContinuousText 1.2",
+        "H5P.ExportableTextArea 1.3",
+        "H5P.Table 1.2",
+        "H5P.InteractiveVideo 1.27",
+        "H5P.TwitterUserFeed 1.0",
+        "H5P.AudioRecorder 1.0",
+        "H5P.MultiMediaChoice 0.3",
+    }
+)
+
+#: The closure for a Course Presentation built out of text slides.
+#:
+#: Resolved by walking ``preloadedDependencies`` through every ``library.json`` in
+#: the Hub's own Course Presentation package, not by reading the top-level list.
+#: That distinction produced a real difference here: Course Presentation declares
+#: only three direct dependencies, but **H5P.Transition arrives through
+#: H5P.JoubelUI**, so a package built from the direct list alone would be missing a
+#: library. Six in total, and four of them were already in this file for the
+#: assessment and interactive-video closures.
+COURSE_PRESENTATION_CLOSURE: tuple[Library, ...] = (
+    COURSE_PRESENTATION,
+    ADVANCED_TEXT,
+    _JOUBELUI,
+    _TRANSITION,
+    _FONTICONS,
+    _FONTAWESOME,
+)

@@ -52,6 +52,10 @@ include = ["app*"]
 # quietly depending on a default someone could reasonably tighten later.
 [tool.setuptools.package-data]
 "app.packaging.scorm" = ["assets/*"]
+# Module D's SCORM course carries its own reporting script, read at emit time the
+# same way Module B's player is. Without this line it is absent from a built wheel
+# and every generated lesson package silently loses its LMS reporting.
+"app.microlesson.emit" = ["assets/*"]
 
 [tool.pytest.ini_options]
 pythonpath = ["."]

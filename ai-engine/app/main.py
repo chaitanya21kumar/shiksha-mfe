@@ -22,6 +22,7 @@ from .chaptering.router import router as chaptering_router
 from .config import settings
 from .ingestion.router import router as ingestion_router
 from .interactive_video.router import router as interactive_video_router
+from .microlesson.emit import EmptyLessonError
 from .microlesson.router import router as microlesson_router
 from .narration.router import router as narration_router
 from .summarization.llm_client import LLMTimeout, LLMUnavailable
@@ -116,6 +117,10 @@ def create_app() -> FastAPI:
 
     @app.exception_handler(EmptyTranscriptError)
     async def _on_empty_transcript(request: Request, exc: EmptyTranscriptError) -> JSONResponse:
+        return JSONResponse(status_code=400, content={"detail": str(exc)})
+
+    @app.exception_handler(EmptyLessonError)
+    async def _on_empty_lesson(request: Request, exc: EmptyLessonError) -> JSONResponse:
         return JSONResponse(status_code=400, content={"detail": str(exc)})
 
     @app.exception_handler(EmptyAssessmentError)
