@@ -440,7 +440,7 @@ class AssessmentSet(BaseModel):
         description="BCP-47 language tag of the questions (H5P manifest, xAPI language maps).",
     )
     generator: str = Field(description='What produced the assessment, e.g. "groq".')
-    model: str = Field(description='The model that generated it, e.g. "llama-3.1-8b-instant".')
+    model: str = Field(description='The model that generated it, e.g. "openai/gpt-oss-20b".')
     generated_at: datetime
     pass_percentage: int = Field(
         default=50,

@@ -20,7 +20,7 @@ from app.transcription.schema import Transcript, TranscriptSegment, TranscriptSo
 _CONFIG = GenerationConfig(
     base_url="https://llm.test/v1",
     api_key="k",
-    model="llama-3.1-8b-instant",
+    model="openai/gpt-oss-20b",
     provider="groq",
     temperature=0.2,
     max_source_chars=24000,
@@ -153,7 +153,7 @@ def test_titles_are_applied_and_provenance_recorded():
     result = _run(_titles_handler({1: "The water cycle"}), _transcript(_speech(4)))
     assert result.chapters[0].title == "The water cycle"
     assert result.generator == "groq"
-    assert result.model == "llama-3.1-8b-instant"
+    assert result.model == "openai/gpt-oss-20b"
     assert result.language == "en"
     assert result.source.filename == "lecture.mp4"
 

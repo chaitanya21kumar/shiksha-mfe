@@ -18,7 +18,7 @@ def _chaptered(chapters: list[Chapter]) -> ChapteredTranscript:
     return ChapteredTranscript(
         source=TranscriptSource(filename="lecture.mp4", media_seconds=300.0),
         generator="groq",
-        model="llama-3.1-8b-instant",
+        model="openai/gpt-oss-20b",
         generated_at=datetime.now(timezone.utc),
         chapters=chapters,
     )

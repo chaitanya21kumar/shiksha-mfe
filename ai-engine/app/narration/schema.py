@@ -51,7 +51,7 @@ class NarrationScript(BaseModel):
     schema_version: str = "1.0"
     source: NarrationSource
     generator: str = Field(description='What produced the narration, e.g. "groq".')
-    model: str = Field(description='The model that generated it, e.g. "llama-3.1-8b-instant".')
+    model: str = Field(description='The model that generated it, e.g. "openai/gpt-oss-20b".')
     generated_at: datetime
     segments: list[NarrationSegment] = Field(default_factory=list)
     total_words: int = Field(default=0, description="Total words across all segments.")

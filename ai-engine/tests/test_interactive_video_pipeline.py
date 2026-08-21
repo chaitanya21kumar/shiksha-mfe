@@ -32,7 +32,7 @@ from app.summarization.router import get_llm_client
 from app.transcription.schema import TranscriptSource
 
 _CONFIG = GenerationConfig(
-    base_url="https://llm.test/v1", api_key="k", model="llama-3.1-8b-instant",
+    base_url="https://llm.test/v1", api_key="k", model="openai/gpt-oss-20b",
     provider="groq", temperature=0.2, max_source_chars=24000,
 )
 
@@ -48,7 +48,7 @@ def _chaptered(count: int = 2) -> ChapteredTranscript:
     return ChapteredTranscript(
         source=TranscriptSource(filename="lecture.mp4", media_seconds=300.0),
         generator="groq",
-        model="llama-3.1-8b-instant",
+        model="openai/gpt-oss-20b",
         generated_at=datetime.now(timezone.utc),
         language="en",
         chapters=[
