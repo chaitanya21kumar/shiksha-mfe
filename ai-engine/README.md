@@ -218,6 +218,15 @@ Then:
 - `POST /micro-lesson/html5/file` — parse an upload, build a lesson and return one HTML file in one call
 - `POST /micro-lesson/scorm` — package a micro-lesson as a SCORM 1.2 course (`.zip`)
 - `POST /micro-lesson/scorm/file` — parse an upload, build a lesson and package it as SCORM in one call
+
+**Module E — the whole pipeline in one call (week 11).** Every module above answers
+one question; these answer all of them at once. A stage that cannot run is reported
+rather than fatal, so a document that supports no question still yields its lesson.
+
+- `POST /course/file` — run every module over one upload and return the course, with a report on each stage
+- `POST /course/text` — build a course from pasted notes (only the lesson can run; the rest report why)
+- `POST /course/bundle/file` — the same, returned as one archive an LMS can be handed
+- `POST /course/bundle` — package a course that was already built, after a teacher has edited it
 - `GET /` — service banner
 - `GET /docs` — interactive API docs
 
