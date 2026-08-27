@@ -178,6 +178,21 @@ confirmation the manifest is complete.
 
 ## Run it
 
+In a container, which is one command and needs no Python on the host:
+
+```bash
+cd ai-engine
+cp .env.example .env           # then put a model API key in it
+docker compose up
+```
+
+`docker compose up` returns once the service can actually answer, not merely once
+the port is open — the health check asks the application rather than the socket.
+The image is 111 MB, starts in about three seconds, runs as a non-root user and
+runs with a read-only root filesystem.
+
+Or directly, which is what you want while developing:
+
 ```bash
 cd ai-engine
 python3.12 -m venv .venv
@@ -275,6 +290,9 @@ change nobody made. Refusing source distributions matters because installing fro
 source runs the package's own setup script on the runner. Regenerate the file the
 way its header describes — inside a Linux container, so the resolution matches the
 runner rather than whatever a developer's laptop happens to resolve.
+
+Running it in production, what to watch when it misbehaves, and how a tenant puts
+the output into Moodle or Sunbird: [`docs/deployment.md`](docs/deployment.md).
 
 ## Benchmarks
 

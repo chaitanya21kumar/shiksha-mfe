@@ -18,7 +18,6 @@ import pytest
 from benchmarks.corpus import SIZES, Document, build_pdf
 from benchmarks.instruments import Timings, TimingTransport
 
-
 # --- the corpus -------------------------------------------------------------------
 
 
