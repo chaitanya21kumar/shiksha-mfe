@@ -148,3 +148,38 @@ def test_compose_reads_configuration_from_the_environment_only():
     body = COMPOSE.read_text()
     assert "env_file" in body
     assert ".env" in body
+
+
+# --- the smoke test must keep covering every route ----------------------------------
+
+
+def test_the_smoke_test_has_a_check_for_every_route_the_app_serves():
+    """The drift this prevents: a route is added, the smoke test still reports "all
+    passed", and nobody notices it never touched the new one.
+
+    Coverage is established by *running* the sweep against a stub transport rather
+    than by searching its source for path strings. Two earlier versions did the
+    latter: the first read `app.routes` and saw three paths instead of thirty-three,
+    so it asserted almost nothing and passed; the second matched text and could not
+    see the paths built in a loop. Executing the real function and asking it what it
+    called is exact, and it cannot be fooled by how a path happens to be spelt.
+    """
+    import httpx
+
+    from app.main import app
+    from scripts.smoke import Sweep, run
+
+    served = set(app.openapi()["paths"])
+    assert len(served) >= 30, f"only {len(served)} routes seen; the source of truth is wrong again"
+
+    def anything(request: httpx.Request) -> httpx.Response:
+        # Truthy JSON, so each stage's result is passed on to the next the way a real
+        # run would; a falsy body would make the sweep skip everything downstream.
+        return httpx.Response(200, json={"ok": True})
+
+    with httpx.Client(transport=httpx.MockTransport(anything), base_url="http://stub") as client:
+        sweep = Sweep(client=client)
+        run(sweep, b"%PDF-1.4 stub", audio=None, video=None, video_url="https://example.org/v.mp4")
+
+    missing = sorted(served - sweep.checked())
+    assert not missing, f"scripts/smoke.py has no check for: {missing}"

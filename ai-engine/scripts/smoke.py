@@ -1,0 +1,287 @@
+"""Verify a running deployment, endpoint by endpoint.
+
+    python -m scripts.smoke                                   # against localhost:8000
+    python -m scripts.smoke --base-url https://engine.example  # against a deployment
+    python -m scripts.smoke --audio clip.mp3 --video lecture.mp4
+
+The test suite proves the code is right. This proves *this deployment* is right — that
+the image was built from the code you think, the configuration reaches it, the model
+gateway is actually callable from wherever it is running, and every route answers. No
+amount of green CI tells you that about a server you just deployed.
+
+**The endpoint list comes from the running service, not from this file.** Whatever
+`/openapi.json` advertises is what gets checked, and an endpoint with no check here is
+reported as unchecked rather than quietly ignored. That is the one property that keeps
+a smoke test honest as the service grows: a new route cannot slip past it.
+
+Checks chain the way a caller does — parse a document once, then feed that result to
+everything that takes a document, and feed each generated artefact to the routes that
+package it. That keeps the model calls down and, more usefully, exercises the round
+trip: every object this engine returns has to be acceptable as an input again.
+
+Media endpoints need media, and none ships in this repository. Without `--audio` and
+`--video` they report **skipped, with the reason** — a skipped check is not a passed
+one, and a smoke test that quietly counted them as fine would be worse than useless.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import sys
+import time
+from dataclasses import dataclass, field
+from pathlib import Path
+
+import httpx
+
+ENGINE = Path(__file__).resolve().parents[1]
+
+PASS, FAIL, SKIP = "pass", "fail", "skip"
+
+
+@dataclass
+class Result:
+    endpoint: str
+    outcome: str
+    detail: str = ""
+    seconds: float = 0.0
+
+
+@dataclass
+class Sweep:
+    """Runs the checks and remembers what each one produced for the next."""
+
+    client: httpx.Client
+    document: dict | None = None
+    assessment: dict | None = None
+    lesson: dict | None = None
+    course: dict | None = None
+    transcript: dict | None = None
+    chaptered: dict | None = None
+    results: list[Result] = field(default_factory=list)
+
+    # --- one check ------------------------------------------------------------------
+
+    def call(self, endpoint: str, method: str = "POST", **kwargs) -> dict | bytes | None:
+        """Make one request, record how it went, and return the body on success."""
+        started = time.perf_counter()
+        try:
+            response = self.client.request(method, endpoint, **kwargs)
+        except httpx.HTTPError as exc:
+            self.results.append(Result(endpoint, FAIL, f"{type(exc).__name__}: {exc}",
+                                       time.perf_counter() - started))
+            return None
+        elapsed = time.perf_counter() - started
+
+        if response.status_code != 200:
+            body = response.text[:160].replace("\n", " ")
+            self.results.append(Result(endpoint, FAIL, f"HTTP {response.status_code}: {body}", elapsed))
+            return None
+
+        kind = response.headers.get("content-type", "")
+        if "application/json" in kind:
+            payload = response.json()
+            self.results.append(Result(endpoint, PASS, _describe(payload), elapsed))
+            return payload
+        self.results.append(Result(endpoint, PASS, f"{len(response.content) / 1024:.1f} KB", elapsed))
+        return response.content
+
+    def skip(self, endpoint: str, why: str) -> None:
+        self.results.append(Result(endpoint, SKIP, why))
+
+    def checked(self) -> set[str]:
+        return {r.endpoint for r in self.results}
+
+
+def _describe(payload) -> str:
+    """A one-line summary of a reply, so the report says what came back."""
+    if not isinstance(payload, dict):
+        return type(payload).__name__
+    for key in ("stages", "questions", "steps", "chapters", "segments", "pages"):
+        if isinstance(payload.get(key), list):
+            return f"{len(payload[key])} {key}"
+    if "ready" in payload:
+        return json.dumps(payload)[:80]
+    if "status" in payload:
+        return str(payload["status"])
+    return ", ".join(list(payload)[:3])
+
+
+# --- the checks ---------------------------------------------------------------------
+
+
+def run(sweep: Sweep, document_pdf: bytes, audio: Path | None, video: Path | None,
+        video_url: str) -> None:
+    pdf = {"file": ("smoke.pdf", document_pdf, "application/pdf")}
+
+    for endpoint in ("/", "/health", "/ready"):
+        sweep.call(endpoint, "GET")
+
+    sweep.document = sweep.call("/ingest", files=pdf)
+    if not sweep.document:
+        print("  /ingest failed, so everything downstream of a parsed document is skipped")
+        for endpoint in ("/summarize", "/narrate", "/assess", "/micro-lesson"):
+            sweep.skip(endpoint, "no parsed document to send")
+        return
+
+    doc = sweep.document
+    sweep.call("/summarize", json=doc)
+    sweep.call("/summarize/file", files=pdf)
+    sweep.call("/narrate", json=doc)
+    sweep.call("/narrate/file", files=pdf)
+
+    sweep.assessment = sweep.call("/assess", json=doc)
+    sweep.call("/assess/file", files=pdf)
+    for target in ("h5p", "scorm"):
+        if sweep.assessment:
+            sweep.call(f"/assess/{target}", json=sweep.assessment)
+        else:
+            sweep.skip(f"/assess/{target}", "no assessment to package")
+        sweep.call(f"/assess/{target}/file", files=pdf)
+
+    sweep.lesson = sweep.call("/micro-lesson", json=doc)
+    sweep.call("/micro-lesson/file", files=pdf)
+    sweep.call("/micro-lesson/text", content=_NOTES, headers={"content-type": "text/plain"})
+    for target in ("h5p", "html5", "scorm"):
+        if sweep.lesson:
+            sweep.call(f"/micro-lesson/{target}", json=sweep.lesson)
+        else:
+            sweep.skip(f"/micro-lesson/{target}", "no lesson to package")
+        sweep.call(f"/micro-lesson/{target}/file", files=pdf)
+
+    sweep.course = sweep.call("/course/file", files=pdf)
+    sweep.call("/course/text", content=_NOTES, headers={"content-type": "text/plain"})
+    if sweep.course:
+        sweep.call("/course/bundle", json=sweep.course)
+    else:
+        sweep.skip("/course/bundle", "no course to package")
+    sweep.call("/course/bundle/file", files=pdf)
+
+    # --- media ----------------------------------------------------------------------
+    if audio:
+        sweep.transcript = sweep.call(
+            "/transcribe", files={"file": (audio.name, audio.read_bytes(), "audio/mpeg")}
+        )
+    else:
+        sweep.skip("/transcribe", "no --audio supplied")
+
+    if sweep.transcript:
+        sweep.chaptered = sweep.call("/chapter", json=sweep.transcript)
+    else:
+        sweep.skip("/chapter", "no transcript to chapter")
+
+    if audio:
+        sweep.chaptered = sweep.call(
+            "/chapter/file", files={"file": (audio.name, audio.read_bytes(), "audio/mpeg")}
+        ) or sweep.chaptered
+    else:
+        sweep.skip("/chapter/file", "no --audio supplied")
+
+    # H5P references a video by URL rather than embedding it, so these routes need
+    # somewhere the player can fetch it from. Any reachable URL will do for a smoke
+    # test — what is being checked is that the package is built, not that it plays.
+    video_query = {"video_url": video_url, "video_mime": "video/mp4"}
+
+    if sweep.chaptered:
+        sweep.call("/micro-lesson/transcript", json=sweep.chaptered)
+        sweep.call("/interactive-video", json=sweep.chaptered, params=video_query)
+    else:
+        sweep.skip("/micro-lesson/transcript", "no chaptered transcript")
+        sweep.skip("/interactive-video", "no chaptered transcript")
+
+    if video:
+        sweep.call(
+            "/interactive-video/file",
+            files={"file": (video.name, video.read_bytes(), "video/mp4")},
+            params=video_query,
+        )
+    else:
+        sweep.skip("/interactive-video/file", "no --video supplied")
+
+
+_NOTES = (
+    "The water cycle\n\n"
+    "Water moves continuously between the ocean, the atmosphere and the land. "
+    "Sunlight warms the surface of the ocean and the fastest molecules escape as vapour. "
+    "As that air rises it cools, and what it can no longer hold condenses into cloud. "
+    "Droplets grow until rising air cannot hold them, and it falls as rain or snow.\n\n"
+    "Where the water goes\n\n"
+    "Water that reaches the ground either soaks into the soil or runs off across it. "
+    "Which one dominates depends on how saturated the ground already is and how steep it is."
+)
+
+
+# --- reporting ------------------------------------------------------------------------
+
+
+def advertised(client: httpx.Client) -> set[str]:
+    """Every path the running service says it serves."""
+    spec = client.get("/openapi.json").json()
+    return set(spec.get("paths", {}))
+
+
+def report(results: list[Result], unchecked: set[str]) -> int:
+    width = max((len(r.endpoint) for r in results), default=20)
+    mark = {PASS: "ok  ", FAIL: "FAIL", SKIP: "skip"}
+    for r in results:
+        timing = f"{r.seconds:6.2f}s" if r.seconds else "       "
+        print(f"  {mark[r.outcome]} {r.endpoint:<{width}} {timing}  {r.detail}")
+
+    failed = [r for r in results if r.outcome == FAIL]
+    skipped = [r for r in results if r.outcome == SKIP]
+    print()
+    print(f"  {len(results) - len(failed) - len(skipped)} passed, {len(failed)} failed, "
+          f"{len(skipped)} skipped, of {len(results)} checks")
+
+    if unchecked:
+        # Not a failure, but it must be visible: the service grew a route and this
+        # file did not, which is how a smoke test silently stops covering things.
+        print(f"\n  advertised but not checked here: {', '.join(sorted(unchecked))}")
+    if failed:
+        print("\n  failures:")
+        for r in failed:
+            print(f"    {r.endpoint}: {r.detail}")
+    return 1 if failed else 0
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description="Verify a running deployment.")
+    parser.add_argument("--base-url", default="http://127.0.0.1:8000")
+    parser.add_argument("--audio", type=Path, help="an audio file, for the media endpoints")
+    parser.add_argument("--video", type=Path, help="a video file, for interactive video")
+    parser.add_argument(
+        "--video-url",
+        default="https://example.org/lecture.mp4",
+        help="the URL an H5P Interactive Video should point its player at",
+    )
+    parser.add_argument("--timeout", type=float, default=300.0)
+    args = parser.parse_args()
+
+    for label, path in (("--audio", args.audio), ("--video", args.video)):
+        if path and not path.is_file():
+            print(f"  {label} {path} does not exist")
+            return 2
+
+    sys.path.insert(0, str(ENGINE))
+    from benchmarks.corpus import build_pdf
+
+    print("  building a document to send…")
+    document = build_pdf(2)
+    print(f"  {document.pages} pages, {document.words} words, {document.kilobytes:.1f} KB")
+    print(f"  sweeping {args.base_url}\n")
+
+    with httpx.Client(base_url=args.base_url, timeout=args.timeout, follow_redirects=True) as client:
+        try:
+            paths = advertised(client)
+        except httpx.HTTPError as exc:
+            print(f"  cannot reach {args.base_url}: {exc}")
+            return 2
+        sweep = Sweep(client=client)
+        run(sweep, document.content, args.audio, args.video, args.video_url)
+
+    return report(sweep.results, paths - sweep.checked())
+
+
+if __name__ == "__main__":
+    sys.exit(main())

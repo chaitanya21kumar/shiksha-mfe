@@ -11,6 +11,7 @@ __pycache__/
 htmlcov/
 tests/
 benchmarks/
+scripts/
 docs/
 *.md
 Dockerfile

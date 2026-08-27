@@ -193,6 +193,29 @@ nobody needs to look first.
 
 ---
 
+## Verifying a deployment
+
+After deploying, check the deployment rather than the code:
+
+```bash
+python -m scripts.smoke --base-url https://engine.example.org
+python -m scripts.smoke --audio clip.mp3 --video lecture.mp4   # includes the media routes
+```
+
+It walks every endpoint the running service advertises, chaining the way a caller
+does — parse a document once, then feed that result to everything that takes one, and
+feed each generated artefact to the routes that package it. That exercises the round
+trip as well: every object the engine returns has to be acceptable as an input again.
+
+The endpoint list comes from the service's own `/openapi.json`, not from the script,
+so a route with no check is reported as unchecked rather than quietly passing. Media
+endpoints need media; without `--audio` and `--video` they report **skipped with the
+reason**, because a skipped check is not a passed one.
+
+A green test suite says the code is right. This says *this* deployment is right — that
+the image was built from the code you think, that configuration reached it, and that
+the model gateway is callable from wherever it is running.
+
 ## Reproducing the claims here
 
 Every measured number in this document came from the image built out of this

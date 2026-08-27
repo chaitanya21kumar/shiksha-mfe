@@ -291,6 +291,17 @@ source runs the package's own setup script on the runner. Regenerate the file th
 way its header describes — inside a Linux container, so the resolution matches the
 runner rather than whatever a developer's laptop happens to resolve.
 
+To check a deployment rather than the code — that the image was built from the code
+you think, that configuration reached it, and that every route answers from wherever
+it is running:
+
+```bash
+python -m scripts.smoke --base-url https://engine.example.org
+```
+
+It walks every endpoint the running service advertises, taking the list from the
+service's own schema so a route with no check is reported rather than quietly passing.
+
 Running it in production, what to watch when it misbehaves, and how a tenant puts
 the output into Moodle or Sunbird: [`docs/deployment.md`](docs/deployment.md).
 
