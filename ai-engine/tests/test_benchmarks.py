@@ -84,7 +84,11 @@ def test_every_shape_of_trailer_identifier_is_pinned(trailer):
     directly rather than waited for."""
     out = pin_identifier(trailer)
     assert FIXED_ID in out
-    assert b"C3BA5133" not in out and b"AB12" not in out and b"(abc)" not in out
+    # Separately, so a failure names the shape that leaked rather than reporting that
+    # the conjunction as a whole was false.
+    assert b"C3BA5133" not in out
+    assert b"AB12" not in out
+    assert b"(abc)" not in out
 
 
 def test_pinning_leaves_document_content_alone():

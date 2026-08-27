@@ -40,6 +40,12 @@ ENGINE = Path(__file__).resolve().parents[1]
 
 PASS, FAIL, SKIP = "pass", "fail", "skip"
 
+#: Route prefixes that appear in several places below. Named so the family and its
+#: two packaging forms cannot drift apart in one spot and not another.
+ASSESS = "/assess"
+MICRO_LESSON = "/micro-lesson"
+COURSE = "/course"
+
 
 #: The only schemes this tool will send a request to. Anything else — `file:`,
 #: `gopher:`, a bare host with no scheme — is refused rather than handed to a client.
@@ -159,22 +165,22 @@ def _documents(sweep: Sweep, pdf: dict) -> None:
     sweep.call("/narrate", json=doc)
     sweep.call("/narrate/file", files=pdf)
 
-    sweep.assessment = sweep.call("/assess", json=doc)
-    sweep.call("/assess/file", files=pdf)
-    _package(sweep, "/assess", ("h5p", "scorm"), sweep.assessment, pdf)
+    sweep.assessment = sweep.call(ASSESS, json=doc)
+    sweep.call(f"{ASSESS}/file", files=pdf)
+    _package(sweep, ASSESS, ("h5p", "scorm"), sweep.assessment, pdf)
 
-    sweep.lesson = sweep.call("/micro-lesson", json=doc)
-    sweep.call("/micro-lesson/file", files=pdf)
-    sweep.call("/micro-lesson/text", content=_NOTES, headers={"content-type": "text/plain"})
-    _package(sweep, "/micro-lesson", ("h5p", "html5", "scorm"), sweep.lesson, pdf)
+    sweep.lesson = sweep.call(MICRO_LESSON, json=doc)
+    sweep.call(f"{MICRO_LESSON}/file", files=pdf)
+    sweep.call(f"{MICRO_LESSON}/text", content=_NOTES, headers={"content-type": "text/plain"})
+    _package(sweep, MICRO_LESSON, ("h5p", "html5", "scorm"), sweep.lesson, pdf)
 
-    sweep.course = sweep.call("/course/file", files=pdf)
-    sweep.call("/course/text", content=_NOTES, headers={"content-type": "text/plain"})
+    sweep.course = sweep.call(f"{COURSE}/file", files=pdf)
+    sweep.call(f"{COURSE}/text", content=_NOTES, headers={"content-type": "text/plain"})
     if sweep.course:
-        sweep.call("/course/bundle", json=sweep.course)
+        sweep.call(f"{COURSE}/bundle", json=sweep.course)
     else:
-        sweep.skip("/course/bundle", "no course to package")
-    sweep.call("/course/bundle/file", files=pdf)
+        sweep.skip(f"{COURSE}/bundle", "no course to package")
+    sweep.call(f"{COURSE}/bundle/file", files=pdf)
 
 
 def _media(sweep: Sweep, audio: Path | None, video: Path | None, video_url: str) -> None:
@@ -202,10 +208,10 @@ def _media(sweep: Sweep, audio: Path | None, video: Path | None, video_url: str)
     query = {"video_url": video_url, "video_mime": "video/mp4"}
 
     if sweep.chaptered:
-        sweep.call("/micro-lesson/transcript", json=sweep.chaptered)
+        sweep.call(f"{MICRO_LESSON}/transcript", json=sweep.chaptered)
         sweep.call("/interactive-video", json=sweep.chaptered, params=query)
     else:
-        sweep.skip("/micro-lesson/transcript", "no chaptered transcript")
+        sweep.skip(f"{MICRO_LESSON}/transcript", "no chaptered transcript")
         sweep.skip("/interactive-video", "no chaptered transcript")
 
     if video:
@@ -228,7 +234,7 @@ def run(sweep: Sweep, document_pdf: bytes, audio: Path | None, video: Path | Non
         _documents(sweep, pdf)
     else:
         print("  /ingest failed, so everything downstream of a parsed document is skipped")
-        for endpoint in ("/summarize", "/narrate", "/assess", "/micro-lesson"):
+        for endpoint in ("/summarize", "/narrate", ASSESS, MICRO_LESSON):
             sweep.skip(endpoint, "no parsed document to send")
 
     _media(sweep, audio, video, video_url)
