@@ -305,6 +305,10 @@ service's own schema so a route with no check is reported rather than quietly pa
 Running it in production, what to watch when it misbehaves, and how a tenant puts
 the output into Moodle or Sunbird: [`docs/deployment.md`](docs/deployment.md).
 
+Every acceptance criterion in the project ticket, against the code that meets it, the
+endpoint that exposes it and the tests that hold it:
+[`docs/acceptance.md`](docs/acceptance.md).
+
 ## Benchmarks
 
 ```bash
