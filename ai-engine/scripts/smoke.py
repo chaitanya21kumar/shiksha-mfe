@@ -32,12 +32,37 @@ import sys
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
+from urllib.parse import urlparse
 
 import httpx
 
 ENGINE = Path(__file__).resolve().parents[1]
 
 PASS, FAIL, SKIP = "pass", "fail", "skip"
+
+
+#: The only schemes this tool will send a request to. Anything else — `file:`,
+#: `gopher:`, a bare host with no scheme — is refused rather than handed to a client.
+ALLOWED_SCHEMES = frozenset({"http", "https"})
+
+
+def checked_url(value: str, *, what: str) -> str:
+    """Return `value` if it is a URL worth sending a request to, else raise.
+
+    Both URLs here come from the command line, and a command line is not always typed
+    by a person — this file is exactly the kind of thing that ends up wrapped in a
+    script or a job. Validating the scheme and requiring a host means a malformed or
+    hostile argument fails immediately with a clear message, rather than turning into
+    a request to somewhere unintended.
+    """
+    parsed = urlparse(value)
+    if parsed.scheme not in ALLOWED_SCHEMES:
+        raise ValueError(
+            f"{what} must be an http or https URL, not {parsed.scheme or 'a bare path'!r}: {value!r}"
+        )
+    if not parsed.netloc:
+        raise ValueError(f"{what} has no host: {value!r}")
+    return value
 
 
 @dataclass
@@ -111,20 +136,23 @@ def _describe(payload) -> str:
 # --- the checks ---------------------------------------------------------------------
 
 
-def run(sweep: Sweep, document_pdf: bytes, audio: Path | None, video: Path | None,
-        video_url: str) -> None:
-    pdf = {"file": ("smoke.pdf", document_pdf, "application/pdf")}
+def _package(sweep: Sweep, area: str, targets: tuple[str, ...], source, pdf: dict) -> None:
+    """Check the packaging routes of one area, in both of their forms.
 
-    for endpoint in ("/", "/health", "/ready"):
-        sweep.call(endpoint, "GET")
+    Each target has a route taking an object and a route taking an upload. The first
+    is skipped with a reason when the stage that produces the object did not run, so a
+    missing package never reads as a passing check.
+    """
+    for target in targets:
+        if source:
+            sweep.call(f"{area}/{target}", json=source)
+        else:
+            sweep.skip(f"{area}/{target}", f"no {area.strip('/')} to package")
+        sweep.call(f"{area}/{target}/file", files=pdf)
 
-    sweep.document = sweep.call("/ingest", files=pdf)
-    if not sweep.document:
-        print("  /ingest failed, so everything downstream of a parsed document is skipped")
-        for endpoint in ("/summarize", "/narrate", "/assess", "/micro-lesson"):
-            sweep.skip(endpoint, "no parsed document to send")
-        return
 
+def _documents(sweep: Sweep, pdf: dict) -> None:
+    """Everything that reads a parsed document."""
     doc = sweep.document
     sweep.call("/summarize", json=doc)
     sweep.call("/summarize/file", files=pdf)
@@ -133,22 +161,12 @@ def run(sweep: Sweep, document_pdf: bytes, audio: Path | None, video: Path | Non
 
     sweep.assessment = sweep.call("/assess", json=doc)
     sweep.call("/assess/file", files=pdf)
-    for target in ("h5p", "scorm"):
-        if sweep.assessment:
-            sweep.call(f"/assess/{target}", json=sweep.assessment)
-        else:
-            sweep.skip(f"/assess/{target}", "no assessment to package")
-        sweep.call(f"/assess/{target}/file", files=pdf)
+    _package(sweep, "/assess", ("h5p", "scorm"), sweep.assessment, pdf)
 
     sweep.lesson = sweep.call("/micro-lesson", json=doc)
     sweep.call("/micro-lesson/file", files=pdf)
     sweep.call("/micro-lesson/text", content=_NOTES, headers={"content-type": "text/plain"})
-    for target in ("h5p", "html5", "scorm"):
-        if sweep.lesson:
-            sweep.call(f"/micro-lesson/{target}", json=sweep.lesson)
-        else:
-            sweep.skip(f"/micro-lesson/{target}", "no lesson to package")
-        sweep.call(f"/micro-lesson/{target}/file", files=pdf)
+    _package(sweep, "/micro-lesson", ("h5p", "html5", "scorm"), sweep.lesson, pdf)
 
     sweep.course = sweep.call("/course/file", files=pdf)
     sweep.call("/course/text", content=_NOTES, headers={"content-type": "text/plain"})
@@ -158,46 +176,62 @@ def run(sweep: Sweep, document_pdf: bytes, audio: Path | None, video: Path | Non
         sweep.skip("/course/bundle", "no course to package")
     sweep.call("/course/bundle/file", files=pdf)
 
-    # --- media ----------------------------------------------------------------------
+
+def _media(sweep: Sweep, audio: Path | None, video: Path | None, video_url: str) -> None:
+    """The routes that take a recording rather than a document."""
     if audio:
-        sweep.transcript = sweep.call(
-            "/transcribe", files={"file": (audio.name, audio.read_bytes(), "audio/mpeg")}
-        )
+        clip = {"file": (audio.name, audio.read_bytes(), "audio/mpeg")}
+        sweep.transcript = sweep.call("/transcribe", files=clip)
     else:
         sweep.skip("/transcribe", "no --audio supplied")
+        clip = None
 
     if sweep.transcript:
         sweep.chaptered = sweep.call("/chapter", json=sweep.transcript)
     else:
         sweep.skip("/chapter", "no transcript to chapter")
 
-    if audio:
-        sweep.chaptered = sweep.call(
-            "/chapter/file", files={"file": (audio.name, audio.read_bytes(), "audio/mpeg")}
-        ) or sweep.chaptered
+    if clip:
+        sweep.chaptered = sweep.call("/chapter/file", files=clip) or sweep.chaptered
     else:
         sweep.skip("/chapter/file", "no --audio supplied")
 
     # H5P references a video by URL rather than embedding it, so these routes need
     # somewhere the player can fetch it from. Any reachable URL will do for a smoke
-    # test — what is being checked is that the package is built, not that it plays.
-    video_query = {"video_url": video_url, "video_mime": "video/mp4"}
+    # test — what is checked is that the package is built, not that it plays.
+    query = {"video_url": video_url, "video_mime": "video/mp4"}
 
     if sweep.chaptered:
         sweep.call("/micro-lesson/transcript", json=sweep.chaptered)
-        sweep.call("/interactive-video", json=sweep.chaptered, params=video_query)
+        sweep.call("/interactive-video", json=sweep.chaptered, params=query)
     else:
         sweep.skip("/micro-lesson/transcript", "no chaptered transcript")
         sweep.skip("/interactive-video", "no chaptered transcript")
 
     if video:
-        sweep.call(
-            "/interactive-video/file",
-            files={"file": (video.name, video.read_bytes(), "video/mp4")},
-            params=video_query,
-        )
+        sweep.call("/interactive-video/file",
+                   files={"file": (video.name, video.read_bytes(), "video/mp4")}, params=query)
     else:
         sweep.skip("/interactive-video/file", "no --video supplied")
+
+
+def run(sweep: Sweep, document_pdf: bytes, audio: Path | None, video: Path | None,
+        video_url: str) -> None:
+    """Walk every endpoint, in the order a caller would reach them."""
+    pdf = {"file": ("smoke.pdf", document_pdf, "application/pdf")}
+
+    for endpoint in ("/", "/health", "/ready"):
+        sweep.call(endpoint, "GET")
+
+    sweep.document = sweep.call("/ingest", files=pdf)
+    if sweep.document:
+        _documents(sweep, pdf)
+    else:
+        print("  /ingest failed, so everything downstream of a parsed document is skipped")
+        for endpoint in ("/summarize", "/narrate", "/assess", "/micro-lesson"):
+            sweep.skip(endpoint, "no parsed document to send")
+
+    _media(sweep, audio, video, video_url)
 
 
 _NOTES = (
@@ -263,22 +297,29 @@ def main() -> int:
             print(f"  {label} {path} does not exist")
             return 2
 
+    try:
+        base_url = checked_url(args.base_url, what="--base-url")
+        video_url = checked_url(args.video_url, what="--video-url")
+    except ValueError as exc:
+        print(f"  {exc}")
+        return 2
+
     sys.path.insert(0, str(ENGINE))
     from benchmarks.corpus import build_pdf
 
     print("  building a document to send…")
     document = build_pdf(2)
     print(f"  {document.pages} pages, {document.words} words, {document.kilobytes:.1f} KB")
-    print(f"  sweeping {args.base_url}\n")
+    print(f"  sweeping {base_url}\n")
 
-    with httpx.Client(base_url=args.base_url, timeout=args.timeout, follow_redirects=True) as client:
+    with httpx.Client(base_url=base_url, timeout=args.timeout, follow_redirects=True) as client:
         try:
             paths = advertised(client)
         except httpx.HTTPError as exc:
-            print(f"  cannot reach {args.base_url}: {exc}")
+            print(f"  cannot reach {base_url}: {exc}")
             return 2
         sweep = Sweep(client=client)
-        run(sweep, document.content, args.audio, args.video, args.video_url)
+        run(sweep, document.content, args.audio, args.video, video_url)
 
     return report(sweep.results, paths - sweep.checked())
 

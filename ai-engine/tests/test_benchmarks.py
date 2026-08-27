@@ -15,8 +15,9 @@ from __future__ import annotations
 import httpx
 import pytest
 
-from benchmarks.corpus import SIZES, Document, build_pdf
+from benchmarks.corpus import FIXED_ID, SIZES, Document, build_pdf, pin_identifier
 from benchmarks.instruments import Timings, TimingTransport
+from benchmarks.run import Measurement
 
 # --- the corpus -------------------------------------------------------------------
 
@@ -41,7 +42,66 @@ def test_the_reported_page_count_is_what_the_pdf_actually_holds():
 def test_the_same_size_gives_byte_identical_documents():
     """Without this, a number measured today cannot be compared with one measured
     next month, because the input would have quietly changed."""
-    assert build_pdf(3).content == build_pdf(3).content
+    first = build_pdf(3).content
+    second = build_pdf(3).content
+    assert first == second
+
+
+def test_the_trailer_identifier_is_always_pinned():
+    """The exact assertion that the test above could not make reliably.
+
+    A PDF's trailer identifier is generated from the contents and the clock, so it is
+    the one thing that differs between two otherwise identical builds. It is rewritten
+    to a fixed value — but PDF allows each half to be a hex string `<…>` or a literal
+    string `(…)`, and a first version only recognised the hex-hex form. PyMuPDF writes
+    a literal half roughly once in fifty builds, so one build in fifty kept its real
+    identifier and came out with different bytes.
+
+    Comparing two builds catches that only when the flake happens to land inside the
+    test; asserting the identifier directly catches it every time.
+    """
+    for pages in (2, 3):
+        content = build_pdf(pages).content
+        assert FIXED_ID in content, f"the {pages}-page build kept a generated identifier"
+
+
+@pytest.mark.parametrize(
+    "trailer",
+    [
+        # Two hex halves — what PyMuPDF writes most of the time.
+        b"trailer\n<</Size 39/Root 1 0 R/ID [<AB12><CD34>]>>\nstartxref",
+        # A hex half and a literal half — what it writes about once in fifty builds,
+        # and the shape a hex-only pattern silently left alone.
+        b"trailer\n<</Size 39/Root 1 0 R/ID[<C3BA5133>(A\\277h\\321?q!8-%)]>>\nstartxref",
+        # Two literal halves, which PDF also permits.
+        b"trailer\n<</Size 39/Root 1 0 R/ID [(abc)(def)]>>\nstartxref",
+        # Split across lines, which a serialiser is free to do.
+        b"trailer\n<</Size 39/Root 1 0 R/ID [<AB12>\n<CD34>]>>\nstartxref",
+    ],
+)
+def test_every_shape_of_trailer_identifier_is_pinned(trailer):
+    """The exact test the generated-document one cannot be: each form is handed over
+    directly rather than waited for."""
+    out = pin_identifier(trailer)
+    assert FIXED_ID in out
+    assert b"C3BA5133" not in out and b"AB12" not in out and b"(abc)" not in out
+
+
+def test_pinning_leaves_document_content_alone():
+    """Anchored on the trailer, so a page that happens to contain the same bytes is
+    not rewritten."""
+    body = b"BT (/ID [<not a trailer>]) Tj ET\ntrailer\n<</Root 1 0 R/ID [<AB><CD>]>>\nstartxref"
+    out = pin_identifier(body)
+    assert b"(/ID [<not a trailer>])" in out
+    assert out.count(FIXED_ID) == 1
+
+
+def test_no_timestamp_survives_into_a_generated_document():
+    """The other half of the same guarantee. A creation date left in place would make
+    every build differ by the second it was made."""
+    content = build_pdf(2).content
+    assert b"D:19800101000000Z" in content
+    assert content.count(b"/CreationDate") == 1
 
 
 def test_a_document_carries_the_counts_a_report_row_needs():
@@ -136,3 +196,42 @@ async def test_a_failed_request_is_still_counted():
 @pytest.fixture
 def anyio_backend():
     return "asyncio"
+
+
+# --- how a reported figure is derived from its samples ------------------------------
+
+
+def test_engine_time_is_the_median_of_the_differences():
+    """Not the difference of the two medians, which is a different number and not a
+    meaningful one: the slowest total and the slowest provider call need not come from
+    the same run.
+
+    These samples are the shape that exposed it. Run 3 was slow overall *and* slow at
+    the provider, so its engine time is ordinary — but the median total comes from run
+    3 while the median provider time comes from run 1, and subtracting one from the
+    other invents 1.5 seconds of engine work that no run actually did.
+    """
+    row = Measurement("whole pipeline", "60-page")
+    row.samples = [25.20, 29.38, 31.48]
+    row.provider = [25.11, 29.29, 27.79]
+
+    assert row.engine_median == pytest.approx(0.09, abs=0.01)
+    # What the wrong arithmetic would have produced, named so a regression is obvious.
+    assert row.median - row.provider_median == pytest.approx(1.59, abs=0.01)
+
+
+def test_engine_time_falls_back_to_the_total_when_nothing_was_measured():
+    """A CPU-only row has no provider samples at all, and its whole cost is ours."""
+    row = Measurement("ingestion", "60-page")
+    row.samples = [0.44, 0.43, 0.45]
+    assert row.engine_median == pytest.approx(0.44)
+
+
+def test_a_report_row_never_claims_negative_engine_time():
+    """The two clocks are read at different moments, so a run can come out marginally
+    negative. That is an artefact, and printing it as a negative duration would read
+    as a bug in the engine."""
+    row = Measurement("whole pipeline", "2-page")
+    row.samples = [10.0, 10.0]
+    row.provider = [10.001, 10.002]
+    assert row.engine_median == 0.0

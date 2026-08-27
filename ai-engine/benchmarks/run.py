@@ -25,6 +25,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import os
 import statistics
 import sys
 import tempfile
@@ -54,6 +55,21 @@ CPU_REPEATS = 5
 PIPELINE_REPEATS = 3
 
 
+def machine_load() -> tuple[float, int]:
+    """The one-minute load average and the core count.
+
+    Reported beside every figure, because a CPU measurement without the conditions it
+    was taken under is not reproducible. Measured once at 435 ms and once at 749 ms
+    for the identical document — the difference was entirely a busy machine, and a
+    reader had no way to know which they were looking at.
+    """
+    try:
+        one_minute = os.getloadavg()[0]
+    except (OSError, AttributeError):  # not available on every platform
+        one_minute = float("nan")
+    return one_minute, os.cpu_count() or 0
+
+
 @dataclass
 class Measurement:
     """One row of the report."""
@@ -78,10 +94,19 @@ class Measurement:
 
     @property
     def engine_median(self) -> float:
-        """The part that is this code rather than somebody else's server."""
+        """The part that is this code rather than somebody else's server.
+
+        The median of the per-run differences, not the difference of the two medians.
+        Those are not the same number and the second is not meaningful: the slowest
+        total and the slowest provider call need not come from the same run, so
+        subtracting one median from the other can attribute a provider hiccup in one
+        run to engine work in another. It reported 1.59 s of engine time for a run
+        whose real figure was a tenth of that.
+        """
         if not self.provider:
             return self.median
-        return max(0.0, self.median - self.provider_median)
+        pairs = zip(self.samples, self.provider, strict=True)
+        return statistics.median(max(0.0, total - provider) for total, provider in pairs)
 
 
 # --- pure CPU: what a tenant's own machine does ------------------------------------
@@ -160,20 +185,30 @@ def _sample_lesson(*, steps: int) -> MicroLesson:
 # --- the whole pipeline: engine time and provider time, separated -------------------
 
 
+def _parsed(document: Document):
+    """Parse a generated document from a temporary file.
+
+    Deliberately synchronous and deliberately called *before* the async measurement
+    below. Writing and parsing a file is pure CPU with blocking I/O, and doing it
+    inside the coroutine would both stall the event loop and add its own cost to the
+    pipeline timings — which are the thing being measured.
+    """
+    with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp:
+        tmp.write(document.content)
+        path = tmp.name
+    try:
+        return parse_pdf(path)
+    finally:
+        Path(path).unlink(missing_ok=True)
+
+
 async def measure_pipeline(documents: list[Document]) -> list[Measurement]:
     """One upload through every stage, the way `/course/file` runs it."""
     rows = []
     options = CourseOptions(with_insights=True, with_lesson=True, with_assessment=True)
-    for doc in documents:
+    prepared = [(doc, _parsed(doc)) for doc in documents]
+    for doc, parsed in prepared:
         row = Measurement("Whole course pipeline", f"{doc.pages}-page PDF")
-        with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp:
-            tmp.write(doc.content)
-            path = tmp.name
-        try:
-            parsed = parse_pdf(path)
-        finally:
-            Path(path).unlink(missing_ok=True)
-
         produced = 0
         for attempt in range(PIPELINE_REPEATS):
             timings = Timings()
@@ -202,7 +237,18 @@ async def measure_pipeline(documents: list[Document]) -> list[Measurement]:
 
 def render(sections: list[tuple[str, list[Measurement]]]) -> str:
     out = ["# Benchmarks", ""]
-    out.append(f"Model: `{settings.llm_model}` · CPU repeats: {CPU_REPEATS} · pipeline repeats: {PIPELINE_REPEATS}")
+    load, cores = machine_load()
+    out.append(
+        f"Model: `{settings.llm_model}` · CPU repeats: {CPU_REPEATS} · "
+        f"pipeline repeats: {PIPELINE_REPEATS} · {cores} cores, load average {load:.2f}"
+    )
+    if load > cores * 0.5:
+        out.append("")
+        out.append(
+            f"> **Measured on a busy machine** (load {load:.2f} across {cores} cores). "
+            "The CPU figures below are correspondingly slower than on an idle one; the "
+            "end-to-end figures are dominated by the provider and barely move."
+        )
     out.append("")
     for title, rows in sections:
         if not rows:
@@ -271,6 +317,8 @@ def main() -> int:
         args.json.write_text(json.dumps(
             {
                 "model": settings.llm_model,
+                "cores": machine_load()[1],
+                "load_average": machine_load()[0],
                 "cpu_repeats": CPU_REPEATS,
                 "pipeline_repeats": PIPELINE_REPEATS,
                 "sections": [

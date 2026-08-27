@@ -31,6 +31,18 @@ Medians, with the range beside them. One slow call to a shared free tier drags a
 somewhere misleading, and hiding that variance behind a single number would
 misrepresent what a tenant should expect.
 
+Engine time is the **median of the per-run differences**, not the difference of the two
+medians. Those are not the same number and the second is not meaningful — the slowest
+total and the slowest provider call need not come from the same run, so subtracting one
+median from the other can attribute a provider hiccup in one run to engine work in
+another. It once reported 1.59 s of engine time for a run whose real figure was 87 ms.
+
+**Every run records the machine's load average beside its figures**, and the report
+says so when the machine was busy. A CPU measurement without the conditions it was
+taken under is not reproducible: the same 60-page document measured 435 ms on an idle
+machine and 843 ms on a loaded one, and a reader had no way to know which they were
+looking at. The figures below are the loaded ones — the conservative case.
+
 ## The documents
 
 Generated to order, structured like a real teaching document — headings, paragraphs,
@@ -52,12 +64,13 @@ Turning a PDF into structured content: pages, headings, and the text beneath eac
 
 | Document | Median | Range |
 |---|---|---|
-| 2-page | 11 ms | 11–12 ms |
-| 20-page | 142 ms | 142–151 ms |
-| 60-page | 435 ms | 433–445 ms |
+| 2-page | 24 ms | 22–25 ms |
+| 20-page | 285 ms | 277–349 ms |
+| 60-page | 843 ms | 833–851 ms |
 
-Roughly linear in page count, at about **7 ms per page**. A sixty-page chapter is
-structured in under half a second on a laptop.
+Roughly linear in page count, at about **14 ms per page** under load. On an otherwise
+idle machine the same documents measured 11 ms, 142 ms and 435 ms — about 7 ms a page.
+Either way a sixty-page chapter is structured in under a second.
 
 ## Packaging — no model involved
 
@@ -66,9 +79,9 @@ which is a long micro-lesson.
 
 | Format | Median | Output |
 |---|---|---|
-| H5P Course Presentation | 236 µs | 2.0 KB |
-| Standalone HTML5 deck | 24 µs | 11.2 KB |
-| SCORM 1.2 course | 302 µs | 6.7 KB |
+| H5P Course Presentation | 493 µs | 2.0 KB |
+| Standalone HTML5 deck | 43 µs | 11.2 KB |
+| SCORM 1.2 course | 631 µs | 6.7 KB |
 
 Microseconds. Packaging is not a cost worth planning for.
 
@@ -78,11 +91,11 @@ One upload through every stage, the way `POST /course/file` runs it.
 
 | Document | Total | Engine | Provider | Range |
 |---|---|---|---|---|
-| 2-page | 16.86 s | 154 ms | 16.71 s | 15.64–18.64 s |
-| 20-page | 29.33 s | 183 ms | 29.15 s | 29.23–50.44 s |
-| 60-page | 26.32 s | 76 ms | 26.24 s | 25.41–29.09 s |
+| 2-page | 15.99 s | 180 ms | 15.81 s | 15.52–40.37 s |
+| 20-page | 35.70 s | 85 ms | 35.61 s | 31.91–166.14 s |
+| 60-page | 31.27 s | 79 ms | 31.19 s | 30.05–31.74 s |
 
-**Engine time stays between 76 and 183 milliseconds regardless of document size —
+**Engine time stays between 79 and 180 milliseconds regardless of document size —
 under 1% of the wall clock.** Everything else is the model.
 
 Two consequences worth stating plainly:
@@ -112,10 +125,13 @@ teacher decide whether to split the chapter.
 
 ### Variance comes from the provider, not the engine
 
-The widest range above — 29.23 s to 50.44 s on the 20-page document — is a single run
+The widest range above — 31.91 s to 166.14 s on the 20-page document — is a single run
 in which the primary gateway rate-limited under nine back-to-back builds and the
-configured fallback took over mid-run. The build still completed and still produced
-every stage. Engine time across those same runs varied by tens of milliseconds.
+configured fallback took over mid-run, waiting out the retry budget as it is designed
+to. The build still completed and still produced every stage, and engine time across
+those same runs varied by tens of milliseconds. That is the whole reason the two halves
+are reported separately: a reader looking only at the total would conclude this service
+had become forty times slower, when nothing about it had changed at all.
 
 ## What is not measured here
 
@@ -135,7 +151,8 @@ Stated so the table is not read as covering more than it does:
 
 | | |
 |---|---|
-| Machine | Apple M1, 8 GB |
+| Machine | Apple M5, 10 cores, 16 GB |
+| Load average during the run | 8.32 — the machine was busy, so CPU figures are conservative |
 | Python | 3.12 |
 | Model | `openai/gpt-oss-20b` through an OpenAI-compatible hosted gateway |
 | Repeats | 5 per CPU measurement, 3 per pipeline measurement |

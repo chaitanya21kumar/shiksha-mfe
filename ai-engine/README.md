@@ -321,11 +321,15 @@ calls. Every run splits its time into **engine time** — parsing, grounding,
 validation, packaging — and **provider time** spent waiting on the model gateway,
 measured at the HTTP transport so nothing instruments the shipped path.
 
-The headline result is that engine time stays between 76 and 183 milliseconds
+The headline result is that engine time stays between 79 and 180 milliseconds
 whatever the document size, which is under 1% of the wall clock; a 60-page PDF is
-parsed into structured content in 435 ms, and packaging a lesson costs
+parsed into structured content in under a second, and packaging a lesson costs
 microseconds. Capacity planning for this service is therefore about concurrent
 waiting and provider rate limits, not about CPU.
+
+Every run records the machine's load average beside its figures, because a CPU
+measurement without the conditions it was taken under is not reproducible — the same
+document measured 435 ms on an idle machine and 843 ms on a loaded one.
 
 Measured figures, the method behind them, and what is deliberately *not* measured
 are in [`docs/benchmarks.md`](docs/benchmarks.md).

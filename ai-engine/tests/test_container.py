@@ -183,3 +183,34 @@ def test_the_smoke_test_has_a_check_for_every_route_the_app_serves():
 
     missing = sorted(served - sweep.checked())
     assert not missing, f"scripts/smoke.py has no check for: {missing}"
+
+
+# --- the smoke tool's own inputs ----------------------------------------------------
+
+
+def test_a_url_that_is_not_http_is_refused():
+    """Both URLs come from the command line, and this file is the kind of thing that
+    ends up inside a script or a job rather than always being typed by a person."""
+    import pytest as _pytest
+
+    from scripts.smoke import checked_url
+
+    for bad in ("file:///etc/passwd", "gopher://example.org", "/just/a/path", "example.org"):
+        with _pytest.raises(ValueError):
+            checked_url(bad, what="--base-url")
+
+
+def test_a_url_with_no_host_is_refused():
+    import pytest as _pytest
+
+    from scripts.smoke import checked_url
+
+    with _pytest.raises(ValueError):
+        checked_url("http://", what="--base-url")
+
+
+def test_an_ordinary_url_passes_through_unchanged():
+    from scripts.smoke import checked_url
+
+    for good in ("http://127.0.0.1:8000", "https://engine.example.org/base"):
+        assert checked_url(good, what="--base-url") == good

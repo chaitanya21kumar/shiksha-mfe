@@ -151,41 +151,28 @@ def build_pdf(pages: int, *, title: str = "Water and the Earth's Systems") -> Do
     """A structured teaching document of at least `pages` pages.
 
     Grown rather than estimated. A first version worked out how many sections should
-    fit on a page and laid out that many — it was asked for sixty pages and produced
-    thirty-two. Adding sections until the page count is reached, then reading the real
-    counts back off the finished document, cannot be wrong in that way.
+    fit on a page and laid out that many — asked for sixty pages it produced
+    thirty-two.
+
+    Grown in **one pass**, too. The version after that rebuilt the whole document each
+    time it added a section, which is quadratic: reaching sixty pages meant laying out
+    a hundred and seventy-eight documents rather than one. Sections only ever append,
+    so the page count can simply be watched as they are added.
     """
-    sections = 0
-    doc, words = _lay_out(1, title)
-    while doc.page_count < pages and sections < _MAX_SECTIONS:
-        doc.close()
-        sections += 1
-        doc, words = _lay_out(sections + 1, title)
-    sections = max(1, sections + 1)
-
-    built = doc.page_count
-    content = _stable_bytes(doc, title)
-    doc.close()
-    return Document(
-        name=f"{built}-page", pages=built, sections=sections, words=words, content=content
-    )
-
-
-def _lay_out(sections: int, title: str) -> tuple[fitz.Document, int]:
-    """Build a document of exactly `sections` sections; return it and its word count."""
     doc = fitz.open()
     page = doc.new_page(width=_WIDTH, height=_HEIGHT)
     y = _write(page, title, _MARGIN, size=18, bold=True) + 10
     words = 0
+    sections = 0
 
-    for index in range(sections):
-        heading = _HEADINGS[index % len(_HEADINGS)]
-        if index >= len(_HEADINGS):
+    while doc.page_count < pages and sections < _MAX_SECTIONS:
+        heading = _HEADINGS[sections % len(_HEADINGS)]
+        if sections >= len(_HEADINGS):
             # Past the pool, keep headings distinct rather than repeating verbatim —
             # a document with twenty identical headings is not one anybody has.
-            heading = f"{heading} ({index // len(_HEADINGS) + 1})"
+            heading = f"{heading} ({sections // len(_HEADINGS) + 1})"
 
-        block = [_PARAGRAPHS[(index + offset) % len(_PARAGRAPHS)] for offset in range(3)]
+        block = [_PARAGRAPHS[(sections + offset) % len(_PARAGRAPHS)] for offset in range(3)]
         needed = 30 + sum(_height_of(text) for text in block)
         if y + needed > _HEIGHT - _MARGIN:
             page = doc.new_page(width=_WIDTH, height=_HEIGHT)
@@ -196,7 +183,14 @@ def _lay_out(sections: int, title: str) -> tuple[fitz.Document, int]:
             y = _write(page, text, y, size=10.5) + 6
             words += len(text.split())
         y += 8
-    return doc, words
+        sections += 1
+
+    built = doc.page_count
+    content = _stable_bytes(doc, title)
+    doc.close()
+    return Document(
+        name=f"{built}-page", pages=built, sections=sections, words=words, content=content
+    )
 
 
 def _stable_bytes(doc: fitz.Document, title: str) -> bytes:
@@ -206,6 +200,17 @@ def _stable_bytes(doc: fitz.Document, title: str) -> bytes:
     on every write. Fixed metadata removes the first; the second is rewritten here
     because PyMuPDF generates it from the file contents and the clock, and a benchmark
     corpus that changes identity between runs cannot be compared across them.
+
+    The identifier is matched loosely on purpose. PDF allows each half to be either a
+    hex string `<…>` or a literal string `(…)`, and PyMuPDF usually writes two hex
+    halves but occasionally writes a literal one. A first version matched only the
+    hex-hex form, so roughly one build in fifty kept its generated identifier and came
+    out with different bytes — a corpus that is deterministic forty-nine times out of
+    fifty is not deterministic, and it failed as an unexplained flake rather than as
+    an obvious bug.
+
+    Setting it through `xref_set_key` was tried first and does not work: PyMuPDF
+    regenerates the second half during serialisation regardless.
     """
     doc.set_metadata(
         {"producer": "lms-ai-engine benchmarks", "creator": "", "title": title,
@@ -213,7 +218,31 @@ def _stable_bytes(doc: fitz.Document, title: str) -> bytes:
          "creationDate": "D:19800101000000Z", "modDate": "D:19800101000000Z"}
     )
     raw = doc.tobytes(garbage=4, deflate=True)
-    return re.sub(rb"/ID\s*\[\s*<[^>]*>\s*<[^>]*>\s*\]", b"/ID [<00><00>]", raw)
+    return pin_identifier(raw)
+
+
+#: What a pinned trailer identifier looks like once rewritten.
+FIXED_ID = b"/ID [<00><00>]"
+
+
+def pin_identifier(raw: bytes) -> bytes:
+    """Replace a PDF's trailer identifier with a fixed one.
+
+    Separate and pure so the guarantee can be tested exactly. Asserting it through a
+    generated document only catches the failure when the flake happens to land inside
+    the test — PyMuPDF writes the awkward form about once in fifty builds — whereas
+    this can be handed both shapes directly.
+
+    Applied from the **last** `/ID` in the file, because that is the trailer's and a
+    lazy match started at an earlier one would run forward into the trailer and delete
+    everything between. A page whose content stream happens to contain the same bytes
+    is left alone — which a test asserts, having caught exactly that mistake.
+    """
+    at = raw.rfind(b"/ID")
+    if at == -1:
+        return raw
+    head, tail = raw[:at], raw[at:]
+    return head + re.sub(rb"/ID\s*\[.*?\](?=\s*>>)", FIXED_ID, tail, count=1, flags=re.DOTALL)
 
 
 def _height_of(text: str, size: float = 10.5) -> float:
