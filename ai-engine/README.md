@@ -276,6 +276,27 @@ source runs the package's own setup script on the runner. Regenerate the file th
 way its header describes — inside a Linux container, so the resolution matches the
 runner rather than whatever a developer's laptop happens to resolve.
 
+## Benchmarks
+
+```bash
+python -m benchmarks.run --offline    # no model calls, no cost
+python -m benchmarks.run              # everything, including live model calls
+```
+
+Separate from the test suite, because these reach a live provider and cost real
+calls. Every run splits its time into **engine time** — parsing, grounding,
+validation, packaging — and **provider time** spent waiting on the model gateway,
+measured at the HTTP transport so nothing instruments the shipped path.
+
+The headline result is that engine time stays between 76 and 183 milliseconds
+whatever the document size, which is under 1% of the wall clock; a 60-page PDF is
+parsed into structured content in 435 ms, and packaging a lesson costs
+microseconds. Capacity planning for this service is therefore about concurrent
+waiting and provider rate limits, not about CPU.
+
+Measured figures, the method behind them, and what is deliberately *not* measured
+are in [`docs/benchmarks.md`](docs/benchmarks.md).
+
 ## Configuration
 
 All settings are environment variables prefixed `AI_ENGINE_` (or a local
