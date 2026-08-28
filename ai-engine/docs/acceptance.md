@@ -13,7 +13,7 @@ Two conventions:
 * **Held by** — the tests that would go red if the behaviour regressed. Named
   individually where a criterion turns on one specific guarantee.
 
-The suite is **968 tests at 93% branch coverage**, one of which needs a browser and
+The suite is **982 tests at 93% branch coverage**, one of which needs a browser and
 skips without one. Every guarantee listed here was additionally broken on purpose to
 confirm its test fails — the mutation harnesses live outside the repository and are
 described in each week's notes.

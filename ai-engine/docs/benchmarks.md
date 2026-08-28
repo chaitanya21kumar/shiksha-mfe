@@ -9,6 +9,14 @@ python -m benchmarks.run              # everything, including live model calls
 python -m benchmarks.run --offline    # only the parts that need no model
 ```
 
+Your numbers will differ, because a CPU figure depends on what else the machine is
+doing and a provider figure depends on the provider. So the run these tables were
+written from is committed alongside them, with every individual sample it took:
+[`benchmarks/results/2026-08-27.json`](../benchmarks/results/2026-08-27.json). Any
+figure below can be traced to the samples it came from, and `tests/test_benchmarks_doc.py`
+checks that each one still matches — a performance claim is the easiest kind to get
+wrong by hand, and nothing else in a document goes red when it drifts.
+
 ## How to read these
 
 **Total wall-clock time is not a useful number on its own.** Most of it is a hosted
