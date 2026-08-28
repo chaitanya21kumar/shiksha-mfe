@@ -29,7 +29,7 @@ Measured on the image built from this repository:
 
 | | |
 |---|---|
-| Image size | 111 MB |
+| Image size | 110 MB — what a registry stores and `docker save` produces. `docker images` reports ~424 MB, which is the expanded on-disk footprint including base layers |
 | Time from `docker run` to healthy | ~3 s |
 | Runs as | `engine`, uid 10001, never root |
 | Root filesystem | read-only; only `/tmp` is writable, for streamed uploads |
